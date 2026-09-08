@@ -1,0 +1,72 @@
+:root {
+  color-scheme: light;
+
+  --background: #f7f7f5;
+  --foreground: #1f2937;
+  --surface: #ffffff;
+  --surface-subtle: #f2f4f3;
+  --surface-selected: #e7f4f1;
+  --muted: #f3f4f6;
+  --muted-foreground: #667085;
+  --border: #e5e7eb;
+  --border-strong: #cbd5e1;
+  --primary: #0f766e;
+  --primary-hover: #115e59;
+  --primary-subtle: #ccfbf1;
+  --focus-ring: #0d9488;
+  --info: #2563eb;
+  --info-subtle: #eff6ff;
+  --success: #15803d;
+  --success-subtle: #f0fdf4;
+  --warning: #b45309;
+  --warning-subtle: #fffbeb;
+  --danger: #b42318;
+  --danger-subtle: #fef2f2;
+  --chart-1: #0f766e;
+  --chart-2: #2563eb;
+  --chart-3: #d97706;
+  --chart-4: #64748b;
+  --chart-5: #b42318;
+
+  --ui-font-sans: "PingFang SC", "Noto Sans SC", "Microsoft YaHei", system-ui, sans-serif;
+  --ui-radius-sm: 6px;
+  --ui-radius-md: 8px;
+  --ui-radius-lg: 12px;
+  --ui-shadow-sm: 0 1px 2px rgb(15 23 42 / 0.04);
+  --ui-shadow-md: 0 8px 24px rgb(15 23 42 / 0.08);
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-surface: var(--surface);
+  --color-surface-subtle: var(--surface-subtle);
+  --color-surface-selected: var(--surface-selected);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
+  --color-primary: var(--primary);
+  --color-primary-hover: var(--primary-hover);
+  --color-primary-subtle: var(--primary-subtle);
+  --color-focus-ring: var(--focus-ring);
+  --color-info: var(--info);
+  --color-info-subtle: var(--info-subtle);
+  --color-success: var(--success);
+  --color-success-subtle: var(--success-subtle);
+  --color-warning: var(--warning);
+  --color-warning-subtle: var(--warning-subtle);
+  --color-danger: var(--danger);
+  --color-danger-subtle: var(--danger-subtle);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --font-sans: var(--ui-font-sans);
+  --radius-sm: var(--ui-radius-sm);
+  --radius-md: var(--ui-radius-md);
+  --radius-lg: var(--ui-radius-lg);
+  --shadow-sm: var(--ui-shadow-sm);
+  --shadow-md: var(--ui-shadow-md);
+}

@@ -1,0 +1,4 @@
+@import "tailwindcss";
+@import "@ue-agent/ui/styles/tokens.css";
+@import "@ue-agent/ui/styles/base.css";
+@import "@ue-agent/ui/styles/utilities.css";

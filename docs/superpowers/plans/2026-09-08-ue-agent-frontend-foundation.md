@@ -37,6 +37,7 @@
 - Create: `tsconfig.base.json`
 - Create: `apps/web/package.json`
 - Create: `apps/web/next.config.ts`
+- Create: `apps/web/eslint.config.mjs`
 - Create: `apps/web/tsconfig.json`
 - Create: `apps/web/postcss.config.mjs`
 - Create: `packages/ui/package.json`
@@ -47,7 +48,7 @@
 - Produces a workspace package named `@ue-agent/web` and a shared package named `@ue-agent/ui`.
 - Produces root scripts `dev`, `build`, `lint`, `typecheck`, and `test` that delegate to the workspace packages.
 
-- [ ] **Step 1: Create the workspace manifests and scripts**
+- [x] **Step 1: Create the workspace manifests and scripts**
 
 Use these package boundaries and scripts:
 
@@ -109,6 +110,8 @@ packages:
     "eslint": "^9.30.0",
     "eslint-config-next": "^16.1.6",
     "jsdom": "^26.1.0",
+    "@tailwindcss/postcss": "^4.1.12",
+    "tailwindcss": "^4.1.12",
     "vitest": "^3.2.4"
   }
 }
@@ -145,7 +148,7 @@ packages:
 }
 ```
 
-- [ ] **Step 2: Add the TypeScript and Tailwind v4 configuration**
+- [x] **Step 2: Add the TypeScript and Tailwind v4 configuration**
 
 Configure `apps/web/tsconfig.json` to extend `../../tsconfig.base.json`, set `baseUrl` to `.`, map `@/*` to `./*`, and include `next-env.d.ts`, `.next/types/**/*.ts`, and `**/*.ts(x)`. Configure `packages/ui/tsconfig.json` to emit no files, use `jsx: react-jsx`, and include `src/**/*.ts(x)`.
 
@@ -156,13 +159,27 @@ const config = { plugins: { "@tailwindcss/postcss": {} } };
 export default config;
 ```
 
+Use `apps/web/eslint.config.mjs` with the Next.js flat-config presets and ignore `.next` output:
+
+```js
+import { defineConfig, globalIgnores } from "eslint/config";
+import nextVitals from "eslint-config-next/core-web-vitals";
+import nextTypescript from "eslint-config-next/typescript";
+
+export default defineConfig([
+  ...nextVitals,
+  ...nextTypescript,
+  globalIgnores([".next/**", "out/**"]),
+]);
+```
+
 Use `packages/ui/components.json` with `style: "radix-nova"`, `rsc: true`, `tsx: true`, `tailwind.css: "apps/web/app/globals.css"`, `tailwind.baseColor: "neutral"`, `tailwind.cssVariables: true`, and `iconLibrary: "tabler"`.
 
-- [ ] **Step 3: Install the workspace lockfile**
+- [x] **Step 3: Install the workspace lockfile**
 
 Run `pnpm install` from the repository root. Expected: a new `pnpm-lock.yaml` is created and both workspace packages resolve without peer-dependency errors that stop installation.
 
-- [ ] **Step 4: Verify the empty scaffold**
+- [x] **Step 4: Verify the empty scaffold**
 
 Run `pnpm typecheck`. Expected: the command may report missing application entry files at this point; record that expected red result and continue to Task 2, where those files are added. Do not mark this task complete until the final task-level checks pass.
 
@@ -186,7 +203,7 @@ Run `pnpm typecheck`. Expected: the command may report missing application entry
 - `cn(...inputs: ClassValue[]): string` merges conditional class names and Tailwind conflicts.
 - `Button`, `Badge`, `Card`, `CardHeader`, `CardContent`, `CardTitle`, `Input`, `Label`, `Separator`, and `Skeleton` are domain-agnostic shared primitives.
 
-- [ ] **Step 1: Write the failing class-name test**
+- [x] **Step 1: Write the failing class-name test**
 
 Create `packages/ui/src/lib/cn.test.ts`:
 
@@ -201,11 +218,11 @@ describe("cn", () => {
 });
 ```
 
-- [ ] **Step 2: Run the test to verify the expected failure**
+- [x] **Step 2: Run the test to verify the expected failure**
 
 Run `pnpm --filter @ue-agent/ui test src/lib/cn.test.ts`. Expected: FAIL because `./cn` does not exist.
 
-- [ ] **Step 3: Implement the smallest `cn` helper and verify green**
+- [x] **Step 3: Implement the smallest `cn` helper and verify green**
 
 Create `packages/ui/src/lib/cn.ts`:
 
@@ -220,17 +237,17 @@ export function cn(...inputs: ClassValue[]) {
 
 Run the same targeted test. Expected: PASS.
 
-- [ ] **Step 4: Add the shared CSS token layers**
+- [x] **Step 4: Add the shared CSS token layers**
 
 Define the exact palette and scales from `docs/standards/02-前端视觉设计系统.md` in `tokens.css`, including `--background: #F7F7F5`, `--primary: #0F766E`, `--border: #E5E7EB`, the semantic status colors, chart colors, font stack, radius scale, spacing scale, and shadow scale. Add Tailwind v4 `@theme inline` mappings to the CSS variables.
 
 Make `base.css` set `box-sizing`, body background/foreground/font, selection color, focus-visible outline, and form control font inheritance. Make `utilities.css` contain only named layout utilities used by the app shell: `page-container`, `section-label`, `text-balance`, and `focus-ring`.
 
-- [ ] **Step 5: Add the primitive components**
+- [x] **Step 5: Add the primitive components**
 
 Implement the primitives with `cn` and CVA. `Button` must support `default`, `secondary`, `outline`, `ghost`, and `danger` variants plus `sm`, `default`, and `lg` sizes. `Badge` must support `neutral`, `info`, `success`, `warning`, and `danger`. Cards must expose header/content/title/description slots. Inputs and labels must preserve accessible `htmlFor` and focus behavior. `Separator` and `Skeleton` must be presentational and token-based.
 
-- [ ] **Step 6: Run the package checks**
+- [x] **Step 6: Run the package checks**
 
 Run `pnpm --filter @ue-agent/ui test`, `pnpm --filter @ue-agent/ui typecheck`, and `git diff --check`. Expected: all tests pass, TypeScript exits 0, and Git reports no whitespace errors.
 
@@ -239,7 +256,7 @@ Run `pnpm --filter @ue-agent/ui test`, `pnpm --filter @ue-agent/ui typecheck`, a
 **Files:**
 - Create: `apps/web/app/globals.css`
 - Create: `apps/web/app/layout.tsx`
-- Create: `apps/web/app/page.tsx`
+- Create: `apps/web/app/(workspace)/page.tsx`
 - Create: `apps/web/app/(workspace)/layout.tsx`
 - Create: `apps/web/components/app-shell.tsx`
 - Create: `apps/web/components/sidebar.tsx`
@@ -252,7 +269,7 @@ Run `pnpm --filter @ue-agent/ui test`, `pnpm --filter @ue-agent/ui typecheck`, a
 - `isNavigationItemActive(pathname: string, href: string): boolean` returns true for an exact route or a child route, except `/` only matches `/`.
 - `AppShell` composes sidebar, topbar, and a main content slot.
 
-- [ ] **Step 1: Write and run the failing navigation tests**
+- [x] **Step 1: Write and run the failing navigation tests**
 
 Create `apps/web/lib/navigation.test.ts`:
 
@@ -271,19 +288,19 @@ describe("isNavigationItemActive", () => {
 
 Run `pnpm --filter @ue-agent/web test lib/navigation.test.ts` after workspace install. Expected: FAIL because `navigation.ts` does not exist.
 
-- [ ] **Step 2: Implement navigation matching and verify green**
+- [x] **Step 2: Implement navigation matching and verify green**
 
 Implement `isNavigationItemActive` with normalized trailing slashes; return `pathname === href` for `/`, and otherwise return `pathname === href || pathname.startsWith(`${href}/`)`. Run `pnpm --filter @ue-agent/web test lib/navigation.test.ts` and expect PASS.
 
-- [ ] **Step 3: Add the application CSS entry point and root layout**
+- [x] **Step 3: Add the application CSS entry point and root layout**
 
 Import Tailwind and the three `@ue-agent/ui` style layers in `apps/web/app/globals.css`. Set metadata to `UE-Agent｜长护险 UE 测算工作台`, and render `AppShell` from the workspace layout so every workspace route receives the same shell.
 
-- [ ] **Step 4: Implement the shell components**
+- [x] **Step 4: Implement the shell components**
 
 Use a 240px sidebar, a 56px topbar, a max content width of 1440px, a 64px collapsed-sidebar affordance, and the approved Tabler icon set. Navigation labels must be `工作台`, `项目`, `U1 城市选址`, `政策资料`, and `系统设置`. The shell must be responsive: sidebar becomes a top-level compact control under 768px; desktop layout must remain two-column at 1200px and above. The topbar must expose the current module name and a non-destructive “新建项目” action link to `/projects/new` without pretending that project creation exists yet.
 
-- [ ] **Step 5: Add the root route and run route-level checks**
+- [x] **Step 5: Add the root route and run route-level checks**
 
 Render `/` as a concise welcome/overview entry that directs users to `/projects` and `/u1` without fake KPI numbers. Run `pnpm --filter @ue-agent/web test`, `pnpm --filter @ue-agent/web typecheck`, and `pnpm --filter @ue-agent/web build`. Expected: all pass.
 
@@ -304,7 +321,7 @@ Render `/` as a concise welcome/overview entry that directs users to `/projects`
 - `getU1StepLabel(step: U1Step): string` returns a fixed Chinese label without business calculations.
 - `EmptyState` and `MetricCard` are reusable domain-light compositions built only from shared primitives.
 
-- [ ] **Step 1: Write and run the failing U1 step-label test**
+- [x] **Step 1: Write and run the failing U1 step-label test**
 
 Create `apps/web/lib/u1.test.ts`:
 
@@ -325,23 +342,23 @@ describe("getU1StepLabel", () => {
 
 Run the targeted test. Expected: FAIL because `u1.ts` does not exist.
 
-- [ ] **Step 2: Implement the label map and verify green**
+- [x] **Step 2: Implement the label map and verify green**
 
 Create the `U1Step` union and an exhaustive `Record<U1Step, string>` map. Implement `getU1StepLabel` as a direct lookup. Run the targeted test and expect PASS.
 
-- [ ] **Step 3: Build the reusable empty and status compositions**
+- [x] **Step 3: Build the reusable empty and status compositions**
 
 `EmptyState` must accept a title, description, optional action label, and optional action href. `MetricCard` must accept a label, a value, and an optional note; it must render an em dash when the value is absent. `StatusBadge` must map only known statuses (`未开始`, `待补数据`, `计算中`, `已完成`, `需复核`) to the approved semantic badge variants.
 
-- [ ] **Step 4: Implement the project list and new-project entry**
+- [x] **Step 4: Implement the project list and new-project entry**
 
 `/projects` must show the page header, a short explanation of the project entity, one primary link to `/projects/new`, and an empty state that says no project data has been connected yet. `/projects/new` must show the first-step form shell (project name, target city, base month) with labels and a disabled “保存并继续” button until backend persistence exists; the page must explicitly state that this phase only establishes the interface.
 
-- [ ] **Step 5: Implement the U1 entry page**
+- [x] **Step 5: Implement the U1 entry page**
 
 `/u1` must show the U1 workflow stepper, a measurement-scope card, an assumptions/data readiness section with em dashes instead of invented values, and a clear action to start a project. It must explain that the first release will verify scope, assumptions, data, calculation, and review in that order. Do not render a “全国最优城市” result or any return/profit number before the calculation service is implemented.
 
-- [ ] **Step 6: Run frontend checks**
+- [x] **Step 6: Run frontend checks**
 
 Run `pnpm --filter @ue-agent/web test`, `pnpm --filter @ue-agent/web typecheck`, `pnpm --filter @ue-agent/web lint`, and `pnpm --filter @ue-agent/web build`. Expected: all pass with no placeholder or hardcoded-color lint findings.
 
@@ -353,15 +370,15 @@ Run `pnpm --filter @ue-agent/web test`, `pnpm --filter @ue-agent/web typecheck`,
 - Modify: `docs/standards/06-前端验收检查表.md`
 - Create: `pnpm-lock.yaml`
 
-- [ ] **Step 1: Update the README implementation status**
+- [x] **Step 1: Update the README implementation status**
 
 Replace the statement that business code has not started with the actual first-phase scope: frontend foundation, app shell, shared UI primitives, project entry, and U1 entry page are available; calculation engine and data connectors are next phases.
 
-- [ ] **Step 2: Record the development checkpoint**
+- [x] **Step 2: Record the development checkpoint**
 
 Add a dated checkpoint to the detailed development specification with the exact commands that passed: `pnpm test`, `pnpm typecheck`, `pnpm lint`, and `pnpm build`.
 
-- [ ] **Step 3: Run the repository verification suite**
+- [x] **Step 3: Run the repository verification suite**
 
 Run:
 
@@ -375,7 +392,7 @@ pnpm build
 
 Expected: every command exits 0. Also inspect `git status --short` and confirm only the planned workspace, documentation, configuration, and lockfile changes are present.
 
-- [ ] **Step 4: Commit the development checkpoint and push**
+- [x] **Step 4: Commit the development checkpoint and push**
 
 Use two focused commits on the authorized `main` branch:
 

@@ -1,0 +1,10 @@
+node_modules/
+.next/
+out/
+coverage/
+.turbo/
+*.tsbuildinfo
+
+# Next.js 16 generates these workspace hints during dev.
+apps/web/AGENTS.md
+apps/web/CLAUDE.md
