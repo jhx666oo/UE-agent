@@ -1,0 +1,8 @@
+{
+  "modelVersion": "u1-excel-v2.1-parity",
+  "issues": [
+    {"code":"SUSPECTED_CELL_REFERENCE","excelCell":"控制台!E32","severity":"warning","status":"needs_business_confirmation","message":"站点覆盖失能客户上限公式使用 E12 作为 80 岁以上失能率引用，第一版保持 Excel 原引用。"},
+    {"code":"DIV0_IN_SUMMARY","excelCell":"阶段汇总表!B12","severity":"warning","status":"needs_business_confirmation","message":"筹备期累计收入为零时，筹备期净利率按 Excel 原公式返回 DIV0。"},
+    {"code":"CUMULATIVE_SERIES_SUM","excelCell":"核心指标卡!C9","severity":"warning","status":"needs_business_confirmation","message":"24个月累计净利润引用 AB32，而 AB32 是累计净利润序列的求和，第一版保持 Excel 原逻辑。"}
+  ]
+}

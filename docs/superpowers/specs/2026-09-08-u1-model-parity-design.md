@@ -145,7 +145,7 @@ ParameterValue {
   "excelCell": "控制台!E32",
   "outputKey": "station.coverage_disabled_customer_limit",
   "excelFormula": "PI()*E28^2*E12*E7*(E9*0.6+E10*0.3+E12*0.1)",
-  "translatedFormula": "PI()*S1^2*city.population_density*C4*(C6*0.6+C7*0.3+C12*0.1)",
+  "translatedFormula": "PI()*S1^2*city.population_density*C4*(C6*0.6+C7*0.3+C9*0.1)",
   "unit": "人",
   "parityStatus": "needs_business_confirmation",
   "issueCode": "SUSPECTED_CELL_REFERENCE"
@@ -247,3 +247,10 @@ status: needs_business_confirmation
 - 纯计算模块可以脱离 Next.js、数据库和 Excel 文件运行。
 - 测试覆盖参数、阶段、核心公式和基准场景。
 - 业务确认公式后，可以通过新增模型版本修正，不修改旧版本结果。
+
+## 13. 2026-09-08 实施状态
+
+- 已完成参数字典、公式台账、问题目录和脱敏基准 fixture。
+- 已完成 Python 标准库 U1 纯计算域：阶段序列、24 个月投影、阶段汇总、核心指标和缺失输入阻断。
+- 已通过 10 项模型单元与回归测试；基准结果与工作簿选定缓存值一致。
+- 下一步接入 FastAPI 适配层和前端参数表单；适配层不得复制 `services/api/app/domain/u1` 中的公式。

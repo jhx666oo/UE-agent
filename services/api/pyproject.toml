@@ -1,0 +1,9 @@
+[project]
+name = "ue-agent-api"
+version = "0.1.0"
+description = "UE Agent deterministic U1 calculation domain"
+requires-python = ">=3.11"
+dependencies = []
+
+[tool.ue-agent]
+model-version = "u1-excel-v2.1-parity"

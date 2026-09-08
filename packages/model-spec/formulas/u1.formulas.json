@@ -1,0 +1,32 @@
+{
+  "modelVersion": "u1-excel-v2.1-parity",
+  "formulas": [
+    {"id":"city.population_density","excelCell":"控制台!E12","outputKey":"C9","excelFormula":"E6*10000/E16","parityStatus":"parity"},
+    {"id":"policy.personal_payment_ratio","excelCell":"控制台!E19","outputKey":"P3","excelFormula":"1-E18","parityStatus":"parity"},
+    {"id":"station.caregiver_daily_hours","excelCell":"控制台!E30","outputKey":"S3","excelFormula":"PI()*E28^2*E12*E7*(E9*0.6+E10*0.3+E11*0.1)","parityStatus":"needs_business_confirmation"},
+    {"id":"station.coverage_disabled_customer_limit","excelCell":"控制台!E32","outputKey":"S5","excelFormula":"PI()*E28^2*E12*E7*(E9*0.6+E10*0.3+E12*0.1)","parityStatus":"needs_business_confirmation"},
+    {"id":"investment.initial_total","excelCell":"控制台!E51","outputKey":"B16","excelFormula":"E49+E50+(E41*E42+E36*E20+E43+E44+E45+E46)*3","parityStatus":"parity"},
+    {"id":"monthly.stage","excelCell":"月度投影表!B3:Y3","outputKey":"stage","excelFormula":"IF(month<=D1,筹备期,IF(month<=D1+D2,启动期,平台期))","parityStatus":"parity"},
+    {"id":"monthly.signed_customers","excelCell":"月度投影表!B5:Y5","outputKey":"signed_customers","excelFormula":"IF(stage=筹备期,0,IF(stage=启动期,MIN(S5*S8*(month-D1)/D2,S5*S8),S5*S8))","parityStatus":"parity"},
+    {"id":"monthly.single_customer_month_revenue","excelCell":"月度投影表!B6:Y6","outputKey":"single_customer_month_revenue","excelFormula":"IF(stage=筹备期,0,P1*P8*S4)","parityStatus":"parity"},
+    {"id":"monthly.long_term_care_revenue","excelCell":"月度投影表!B7:Y7","outputKey":"long_term_care_revenue","excelFormula":"IF(stage=筹备期,0,signed_customers*single_customer_month_revenue)","parityStatus":"parity"},
+    {"id":"monthly.fund_payment_revenue","excelCell":"月度投影表!B8:Y8","outputKey":"fund_payment_revenue","excelFormula":"long_term_care_revenue*P2","parityStatus":"parity"},
+    {"id":"monthly.personal_payment_revenue","excelCell":"月度投影表!B9:Y9","outputKey":"personal_payment_revenue","excelFormula":"long_term_care_revenue*P3","parityStatus":"parity"},
+    {"id":"monthly.auxiliary_revenue","excelCell":"月度投影表!B10:Y10","outputKey":"auxiliary_revenue","excelFormula":"IF(stage=筹备期,0,IF(stage=启动期,A2+A5,A1+A2+A3*A4*E6+A5))","parityStatus":"parity"},
+    {"id":"monthly.total_revenue","excelCell":"月度投影表!B11:Y11","outputKey":"total_revenue","excelFormula":"long_term_care_revenue+auxiliary_revenue","parityStatus":"parity"},
+    {"id":"monthly.caregivers","excelCell":"月度投影表!B12:Y12","outputKey":"caregivers","excelFormula":"IF(stage=筹备期,P4,MAX(P4,CEILING(signed_customers*P8/S3/S4/E1,1)))","parityStatus":"parity"},
+    {"id":"monthly.caregiver_cost","excelCell":"月度投影表!B13:Y13","outputKey":"caregiver_cost","excelFormula":"caregivers*B1*B2","parityStatus":"parity"},
+    {"id":"monthly.sales_cost","excelCell":"月度投影表!B14:Y14","outputKey":"sales_cost","excelFormula":"IF(stage=筹备期,0,IF(stage=启动期,MAX(0,current_customers-previous_customers)*E5,MAX(0,current_customers*E3)*E5*0.5))","parityStatus":"parity"},
+    {"id":"monthly.nurse_cost","excelCell":"月度投影表!B15:Y15","outputKey":"nurse_cost","excelFormula":"IF(B3=挂证,B4*P5,IF(B3=全职,B5*P5,0))","parityStatus":"parity"},
+    {"id":"monthly.variable_cost","excelCell":"月度投影表!B16:Y16","outputKey":"variable_cost","excelFormula":"IF(stage=筹备期,caregiver_cost+nurse_cost,caregiver_cost+sales_cost+nurse_cost)","parityStatus":"parity"},
+    {"id":"monthly.fixed_cost","excelCell":"月度投影表!B27:Y27","outputKey":"fixed_cost","excelFormula":"SUM(rows17:26)","parityStatus":"parity"},
+    {"id":"monthly.net_profit","excelCell":"月度投影表!B29:Y29","outputKey":"net_profit","excelFormula":"gross_profit-fixed_cost","parityStatus":"parity"},
+    {"id":"monthly.cumulative_net_profit","excelCell":"月度投影表!B32:Y32","outputKey":"cumulative_net_profit","excelFormula":"previous_cumulative_net_profit+net_profit","parityStatus":"parity"},
+    {"id":"monthly.cumulative_cash_flow","excelCell":"月度投影表!B33:Y33","outputKey":"cumulative_cash_flow","excelFormula":"previous_cumulative_cash_flow+net_profit+material_amortization+renovation_amortization-initial_investment_if_month_1","parityStatus":"parity"},
+    {"id":"monthly.payback_marker","excelCell":"月度投影表!B34:Y34","outputKey":"cash_flow_positive_marker","excelFormula":"IF(cumulative_cash_flow>=0 AND cumulative_cash_flow<>0,1,0)","parityStatus":"parity"},
+    {"id":"monthly.payback_month_candidate","excelCell":"月度投影表!B35:Y35","outputKey":"cash_flow_positive_month","excelFormula":"IF(payback_marker=1,month,blank)","parityStatus":"parity"},
+    {"id":"monthly.break_even_customers","excelCell":"月度投影表!B36:Y36","outputKey":"break_even_customers","excelFormula":"IF(stage=平台期,ROUNDUP(fixed_cost/(P1*P8*S4-B1*B2*P8/S3/S4/E1),0),blank)","parityStatus":"parity"},
+    {"id":"summary.preparation_net_margin","excelCell":"阶段汇总表!B12","outputKey":"preparation_net_margin","excelFormula":"B8/B5","parityStatus":"needs_business_confirmation"},
+    {"id":"summary.twenty_four_month_cumulative_net_profit","excelCell":"核心指标卡!C9","outputKey":"twenty_four_month_cumulative_net_profit","excelFormula":"SUM(月度投影表!B32:Y32)","parityStatus":"needs_business_confirmation"}
+  ]
+}

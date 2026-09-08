@@ -763,7 +763,8 @@ POST   /api/v1/review-items/{id}/approve
 - 已将颜色、字体、圆角、间距、阴影和组件边界收敛到 `packages/ui/src/styles/` 与共享组件。
 - 当前页面明确使用空值和待配置状态，不生成城市排名、收益结论或默认业务建议。
 - 已通过：`pnpm test`、`pnpm typecheck`、`pnpm lint`、`pnpm build`。
-- 尚未进入：FastAPI 服务、数据库、确定性计算引擎、政策爬虫、真实数据导入和认证。
+- 已完成：Python 标准库确定性 U1 复刻引擎、参数/公式/问题规格、脱敏基准 fixture 和 24 个月回归测试。
+- 尚未进入：FastAPI 请求适配、数据库、政策爬虫、真实数据导入和认证。
 
 ## 22. V1 验收标准
 
