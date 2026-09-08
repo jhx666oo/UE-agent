@@ -1,3 +1,4 @@
+import React from "react";
 import { Card, CardContent } from "@ue-agent/ui/components/card";
 
 export function MetricCard({

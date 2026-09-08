@@ -87,3 +87,10 @@ U1 domain engine
 - TypeScript：API client 的 URL/错误解析、参数分组和数字/null 格式化。
 - 浏览器交互：先以组件级状态测试和生产构建为门槛；Playwright 在下一阶段 API 稳定后补充。
 - 验收基准继续使用 `packages/model-spec/fixtures/u1-baseline.json`，不生成新的虚构业务结果。
+
+## 8. 实施状态
+
+- 已完成：FastAPI 健康、模型规格、项目/场景 CRUD 和测算接口。
+- 已完成：本地 JSON 原子保存、动态 U1 参数表单、结果指标、阶段汇总、月度明细和问题列表。
+- 已验证：API 进程级闭环返回基准回本月 24，问题集合为三个当前已登记问题。
+- 未包含：数据库、认证权限、政策爬虫、多城市对比、Playwright 和生产部署。

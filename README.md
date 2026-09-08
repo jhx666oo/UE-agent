@@ -2,7 +2,7 @@
 
 长护险城市与单站投资决策系统。
 
-本仓库已经完成工程规范基线、第一阶段前端骨架和 U1 Excel 复刻计算基座。当前可运行版本聚焦统一应用壳层、项目入口、U1 城市选址入口和纯 Python 24 个月模型；FastAPI、真实数据连接和政策采集将在后续阶段逐步接入。
+本仓库已经完成工程规范基线、第一阶段前端骨架、U1 Excel 复刻计算基座和本地可运行的 U1 MVP 闭环。当前可运行版本支持创建项目、编辑参数、保存场景、执行 24 个月测算和复核待确认问题；数据库、真实数据连接和政策采集将在后续阶段逐步接入。
 
 ## 项目目标
 
@@ -54,20 +54,33 @@
 - 产品与架构文档：v0.1
 - 工程与前端规范：v0.2
 - 前端代码：workspace、应用壳层、共享组件、项目入口、U1 入口已完成第一阶段
-- 计算引擎：Python 标准库纯计算域已接入并通过基准回归；真实数据、API 和页面表单尚未接入
+- 计算引擎：Python 纯计算域已接入并通过基准回归
+- 本地 API 与前端：FastAPI、JSON 项目存储、动态参数表单和结果复核已接入
 - 部署环境：未创建
 
 ## 本阶段运行方式
 
 ```bash
 pnpm install
+```
+
+在两个终端分别执行：
+
+```bash
+pnpm api:dev
+```
+
+```bash
 pnpm dev
 ```
 
-默认访问 `http://localhost:3000`。当前可查看 `/projects`、`/projects/new` 和 `/u1`。
+API 默认访问 `http://localhost:8000`，前端默认访问 `http://localhost:3000`。当前可查看 `/projects`、`/projects/new`、`/u1` 和创建项目后的 `/projects/{projectId}/u1`。
 
 验证 U1 模型：
 
 ```bash
 pnpm model:test
+pnpm api:test
 ```
+
+如果 API 不在默认地址，复制 `apps/web/.env.example` 为 `.env.local` 并修改 `NEXT_PUBLIC_API_BASE_URL`。
