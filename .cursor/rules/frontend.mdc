@@ -1,0 +1,18 @@
+---
+description: UE Agent frontend design system and component reuse rules
+globs: "apps/web/**/*.{ts,tsx,css},packages/ui/**/*.{ts,tsx,css}"
+alwaysApply: false
+---
+
+# UE Agent frontend rules
+
+Read `@docs/standards/02-前端视觉设计系统.md`, `@docs/standards/03-页面布局与交互规范.md`, `@docs/standards/04-CSS与样式文件规范.md`, and `@docs/standards/06-前端验收检查表.md`.
+
+- Use the existing `packages/ui` component or compose existing components before adding a new one.
+- Use shadcn/ui + Radix, Tailwind v4 semantic tokens, and Tabler Icons only.
+- Do not introduce competing UI, icon, form, table, chart, date, or toast libraries.
+- Do not hardcode brand colors, radii, shadows, z-index, or page-specific global CSS.
+- Implement complete async and form states, including stale UE results after input changes.
+- Do not guess business values or let LLM output enter the authoritative calculation path.
+- Run the applicable checks and report actual evidence before claiming completion.
+

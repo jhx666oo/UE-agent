@@ -19,6 +19,13 @@
 
 - [UE Agent 详细开发规范 v0.1](docs/UE-Agent-详细开发规范-v0.1.md)
 - [GitHub 参考项目与技术选型](docs/GitHub-参考项目与技术选型.md)
+- [开发规范总则 v0.2](docs/standards/00-规范总则.md)
+- [组件与第三方代码复用规范](docs/standards/01-组件与第三方代码复用规范.md)
+- [前端视觉设计系统](docs/standards/02-前端视觉设计系统.md)
+- [页面布局与交互规范](docs/standards/03-页面布局与交互规范.md)
+- [CSS 与样式文件规范](docs/standards/04-CSS与样式文件规范.md)
+- [Vibe Coding 开发约束](docs/standards/05-Vibe-Coding开发约束.md)
+- [前端验收检查表](docs/standards/06-前端验收检查表.md)
 
 ## 当前阶段原则
 
@@ -41,6 +48,7 @@
 ## 仓库状态
 
 - 状态：设计草案
-- 文档版本：v0.1
+- 产品与架构文档：v0.1
+- 工程与前端规范：v0.2
 - 业务代码：未开始
 - 部署环境：未创建
