@@ -7,7 +7,8 @@ import tempfile
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Mapping
+from collections.abc import Callable
+from typing import Any, Mapping, Protocol
 
 
 def utc_now() -> str:
@@ -18,30 +19,119 @@ def new_id(prefix: str) -> str:
     return f"{prefix}-{uuid.uuid4().hex}"
 
 
+def empty_store_payload() -> dict[str, Any]:
+    return {
+        "projects": [],
+        "calculationSnapshots": [],
+        "dataSources": [],
+        "policyDocuments": [],
+        "policyFacts": [],
+    }
+
+
+def normalize_store_payload(payload: Any) -> dict[str, Any]:
+    if not isinstance(payload, dict) or not isinstance(payload.get("projects"), list):
+        raise ValueError("Invalid project store payload")
+    for collection in ("calculationSnapshots", "dataSources", "policyDocuments", "policyFacts"):
+        if not isinstance(payload.get(collection, []), list):
+            raise ValueError(f"Invalid {collection} store")
+        payload.setdefault(collection, [])
+    return payload
+
+
+class PolicyFileStore(Protocol):
+    def put(self, pathname: str, content: bytes, *, content_type: str) -> dict[str, str]: ...
+
+    def get(self, pathname: str) -> bytes: ...
+
+
+class LocalPolicyFileStore:
+    def __init__(self, root: Path):
+        self.root = Path(root)
+
+    def _resolve(self, pathname: str) -> Path:
+        relative = Path(pathname)
+        if relative.is_absolute() or ".." in relative.parts:
+            raise ValueError("Invalid policy file path")
+        return self.root / relative
+
+    def put(self, pathname: str, content: bytes, *, content_type: str) -> dict[str, str]:
+        target = self._resolve(pathname)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        temporary_path: str | None = None
+        try:
+            with tempfile.NamedTemporaryFile(dir=target.parent, prefix=f".{target.name}.", suffix=".tmp", delete=False) as temporary:
+                temporary_path = temporary.name
+                temporary.write(content)
+                temporary.flush()
+                os.fsync(temporary.fileno())
+            os.replace(temporary_path, target)
+            temporary_path = None
+        finally:
+            if temporary_path is not None:
+                Path(temporary_path).unlink(missing_ok=True)
+        return {"pathname": pathname, "url": f"/{pathname}"}
+
+    def get(self, pathname: str) -> bytes:
+        return self._resolve(pathname).read_bytes()
+
+
+class VercelBlobPolicyFileStore:
+    def __init__(self, client_factory: Callable[[], Any] | None = None):
+        self.client_factory = client_factory
+
+    def _client(self) -> Any:
+        if self.client_factory is not None:
+            return self.client_factory()
+        from vercel.blob import BlobClient
+
+        return BlobClient()
+
+    @staticmethod
+    def _close(client: Any) -> None:
+        close = getattr(client, "close", None)
+        if callable(close):
+            close()
+
+    def put(self, pathname: str, content: bytes, *, content_type: str) -> dict[str, str]:
+        client = self._client()
+        try:
+            result = client.put(
+                pathname,
+                content,
+                access="private",
+                content_type=content_type,
+                add_random_suffix=False,
+            )
+            return {"pathname": result.pathname, "url": result.url}
+        finally:
+            self._close(client)
+
+    def get(self, pathname: str) -> bytes:
+        client = self._client()
+        try:
+            result = client.get(pathname, access="private")
+            return bytes(result.content)
+        finally:
+            self._close(client)
+
+
 class JsonProjectRepository:
     """Small local repository used until the API has a database adapter."""
 
-    def __init__(self, path: Path):
+    def __init__(self, path: Path, file_store: PolicyFileStore | None = None):
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.file_store = file_store or LocalPolicyFileStore(self.path.parent)
 
     def _read(self) -> dict[str, Any]:
         if not self.path.exists():
-            return {
-                "projects": [],
-                "calculationSnapshots": [],
-                "dataSources": [],
-                "policyDocuments": [],
-                "policyFacts": [],
-            }
+            return empty_store_payload()
         payload = json.loads(self.path.read_text(encoding="utf-8"))
-        if not isinstance(payload, dict) or not isinstance(payload.get("projects"), list):
-            raise ValueError(f"Invalid project store: {self.path}")
-        for collection in ("calculationSnapshots", "dataSources", "policyDocuments", "policyFacts"):
-            if not isinstance(payload.get(collection, []), list):
-                raise ValueError(f"Invalid {collection} store: {self.path}")
-            payload.setdefault(collection, [])
-        return payload
+        try:
+            return normalize_store_payload(payload)
+        except ValueError as error:
+            raise ValueError(f"Invalid project store: {self.path}") from error
 
     def _write(self, payload: dict[str, Any]) -> None:
         temporary_path: str | None = None
@@ -258,22 +348,12 @@ class JsonProjectRepository:
 
     def create_policy_document(self, data: Mapping[str, Any], content: bytes, suffix: str) -> dict[str, Any]:
         document_id = new_id("policy")
-        file_dir = self.path.parent / "policy_files"
-        file_dir.mkdir(parents=True, exist_ok=True)
-        stored_name = f"{document_id}{suffix}"
-        stored_path = file_dir / stored_name
-        temporary_path: str | None = None
-        try:
-            with tempfile.NamedTemporaryFile(dir=file_dir, prefix=f".{document_id}.", suffix=".tmp", delete=False) as temporary:
-                temporary_path = temporary.name
-                temporary.write(content)
-                temporary.flush()
-                os.fsync(temporary.fileno())
-            os.replace(temporary_path, stored_path)
-            temporary_path = None
-        finally:
-            if temporary_path is not None:
-                Path(temporary_path).unlink(missing_ok=True)
+        stored_path = f"policy_files/{document_id}{suffix}"
+        stored_file = self.file_store.put(
+            stored_path,
+            content,
+            content_type=str(data.get("mimeType") or "application/octet-stream"),
+        )
 
         now = utc_now()
         document = {
@@ -284,7 +364,8 @@ class JsonProjectRepository:
             "size": int(data.get("size") or len(content)),
             "sha256": str(data["sha256"]),
             "source": str(data["source"]),
-            "storedPath": str(Path("policy_files") / stored_name),
+            "storedPath": stored_file["pathname"],
+            "storedUrl": stored_file["url"],
             "status": str(data.get("status") or "uploaded"),
             "uploadedAt": now,
             "updatedAt": now,
@@ -293,6 +374,9 @@ class JsonProjectRepository:
         payload.setdefault("policyDocuments", []).append(document)
         self._write(payload)
         return copy.deepcopy(document)
+
+    def read_policy_document(self, document: Mapping[str, Any]) -> bytes:
+        return self.file_store.get(str(document["storedPath"]))
 
     def update_policy_document(self, document_id: str, data: Mapping[str, Any]) -> dict[str, Any]:
         payload = self._read()
@@ -361,3 +445,60 @@ class JsonProjectRepository:
         fact["updatedAt"] = utc_now()
         self._write(payload)
         return copy.deepcopy(fact)
+
+
+class PostgresProjectRepository(JsonProjectRepository):
+    """Postgres-backed JSON document store used by the Vercel API deployment."""
+
+    def __init__(self, dsn: str, file_store: PolicyFileStore | None = None):
+        self.dsn = dsn
+        self.file_store = file_store or VercelBlobPolicyFileStore()
+        self.path = Path("/tmp/ue-agent/projects.json")
+        self._ensure_schema()
+
+    def _connect(self) -> Any:
+        import psycopg
+
+        return psycopg.connect(self.dsn)
+
+    def _ensure_schema(self) -> None:
+        from psycopg.types.json import Jsonb
+
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS ue_agent_store (
+                        id SMALLINT PRIMARY KEY CHECK (id = 1),
+                        payload JSONB NOT NULL,
+                        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                    )
+                    """
+                )
+                cursor.execute(
+                    """
+                    INSERT INTO ue_agent_store (id, payload)
+                    VALUES (1, %s)
+                    ON CONFLICT (id) DO NOTHING
+                    """,
+                    (Jsonb(empty_store_payload()),),
+                )
+
+    def _read(self) -> dict[str, Any]:
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute("SELECT payload FROM ue_agent_store WHERE id = 1")
+                row = cursor.fetchone()
+        if row is None:
+            return empty_store_payload()
+        return normalize_store_payload(row[0])
+
+    def _write(self, payload: dict[str, Any]) -> None:
+        from psycopg.types.json import Jsonb
+
+        with self._connect() as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "UPDATE ue_agent_store SET payload = %s, updated_at = NOW() WHERE id = 1",
+                    (Jsonb(payload),),
+                )

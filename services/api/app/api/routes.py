@@ -5,7 +5,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from fastapi import APIRouter, File, Form, Request, Response, UploadFile
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import JSONResponse
 
 from ..domain.u1.engine import DEFAULT_MODEL_VERSION, calculate_u1
 from ..domain.u1.issues import load_known_issues
@@ -209,10 +209,15 @@ def policy_document_content(document_id: str, request: Request) -> Response:
         document = repository.get_policy_document(document_id)
     except KeyError:
         return error_payload("NOT_FOUND", f"Policy document not found: {document_id}")
-    file_path = repository.path.parent / document["storedPath"]
-    if not file_path.is_file():
+    try:
+        content = repository.read_policy_document(document)
+    except (FileNotFoundError, KeyError):
         return error_payload("NOT_FOUND", f"Policy file not found: {document_id}")
-    return FileResponse(file_path, media_type=document.get("mimeType"), filename=document.get("originalName"))
+    return Response(
+        content=content,
+        media_type=document.get("mimeType"),
+        headers={"Content-Disposition": f'inline; filename="{document.get("originalName", "policy")}"'},
+    )
 
 
 @router.post("/policies/documents/upload", status_code=201, response_model=None)

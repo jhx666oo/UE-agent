@@ -1,0 +1,6 @@
+tests/
+scripts/
+data/
+.venv/
+__pycache__/
+*.py[cod]
