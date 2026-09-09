@@ -37,6 +37,7 @@ export type ModelIssue = {
 export type ProjectRecord = {
   id: string;
   name: string;
+  cityId?: string | null;
   city: string;
   district: string | null;
   baseMonth: string | null;
@@ -51,9 +52,24 @@ export type ScenarioRecord = {
   name: string;
   inputs: Record<string, number | string | null>;
   result: U1Result | null;
-  status: "draft" | "calculated" | "blocked";
+  status: "draft" | "stale" | "calculating" | "calculated" | "confirmed" | "failed" | "blocked";
   createdAt: string;
   updatedAt: string;
+  inputSnapshot?: Record<string, number | string | null>;
+  calculatedAt?: string | null;
+  resultSnapshotId?: string | null;
+};
+
+export type CalculationSnapshot = {
+  snapshotId: string;
+  projectId: string;
+  scenarioId: string;
+  inputSnapshot: Record<string, number | string | null>;
+  resultSnapshot: U1Result;
+  modelVersion: string | null;
+  calculatedAt: string;
+  status: "calculated" | "confirmed" | "blocked" | "stale";
+  issues: ModelIssue[];
 };
 
 export type U1Result = {
@@ -157,6 +173,14 @@ export function updateScenario(projectId: string, scenarioId: string, input: { i
     method: "PUT",
     body: JSON.stringify(input),
   });
+}
+
+export function listScenarioSnapshots(projectId: string, scenarioId: string) {
+  return apiFetch<CalculationSnapshot[]>(`/api/projects/${projectId}/scenarios/${scenarioId}/snapshots`);
+}
+
+export function confirmScenario(projectId: string, scenarioId: string) {
+  return apiFetch<ScenarioRecord>(`/api/projects/${projectId}/scenarios/${scenarioId}/confirm`, { method: "POST" });
 }
 
 export function calculateScenario(projectId: string, scenarioId: string) {

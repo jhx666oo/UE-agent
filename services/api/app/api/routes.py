@@ -4,15 +4,25 @@ from dataclasses import fields, is_dataclass
 from collections.abc import Mapping
 from typing import Any
 
-from fastapi import APIRouter, Request, Response
-from fastapi.responses import JSONResponse
+from fastapi import APIRouter, File, Form, Request, Response, UploadFile
+from fastapi.responses import FileResponse, JSONResponse
 
 from ..domain.u1.engine import DEFAULT_MODEL_VERSION, calculate_u1
 from ..domain.u1.issues import load_known_issues
 from ..domain.u1.models import FormulaValue, ModelIssue, MonthlyProjection, U1Result
 from ..domain.u1.spec import load_json_spec, load_parameter_catalog
+from ..domain.dashboard.aggregator import build_dashboard_overview
+from ..domain.policy.service import PolicyService
 from ..repository import JsonProjectRepository
-from .schemas import ProjectCreate, ScenarioCreate, ScenarioUpdate
+from .schemas import (
+    DataSourceCreate,
+    DataSourceUpdate,
+    PolicyParseRequest,
+    PolicyReviewRequest,
+    ProjectCreate,
+    ScenarioCreate,
+    ScenarioUpdate,
+)
 
 
 router = APIRouter()
@@ -75,6 +85,191 @@ def health() -> dict[str, str]:
     return {"status": "ok", "modelVersion": DEFAULT_MODEL_VERSION}
 
 
+def _dashboard_query(
+    request: Request,
+    scope: str,
+    city_ids: str | None,
+    period: int,
+    scenario: str,
+    include_stale: bool,
+) -> dict[str, Any] | JSONResponse:
+    if scope not in {"global", "city", "compare"}:
+        return error_payload("INVALID_QUERY", "scope 必须是 global、city 或 compare")
+    if period not in {12, 24}:
+        return error_payload("INVALID_QUERY", "period 必须是 12 或 24")
+    if scenario != "latest":
+        return error_payload("INVALID_QUERY", "当前仅支持 scenario=latest")
+    ids = [item.strip() for item in (city_ids or "").split(",") if item.strip()]
+    if scope == "city" and len(ids) != 1:
+        return error_payload("INVALID_QUERY", "city 视图需要一个 cityIds")
+    if scope == "compare" and not ids:
+        return error_payload("INVALID_QUERY", "compare 视图至少需要一个 cityIds")
+    repository = repository_from_request(request)
+    policy_summary = PolicyService(repository).overview(ids if scope != "global" and ids else None)
+    return build_dashboard_overview(
+        repository.list_projects(),
+        repository.list_snapshots(),
+        scope=scope,
+        city_ids=ids,
+        period=period,
+        include_stale=include_stale,
+        policy_summary=policy_summary,
+    )
+
+
+@router.get("/dashboard/overview", response_model=None)
+def dashboard_overview(
+    request: Request,
+    scope: str = "global",
+    cityIds: str | None = None,
+    period: int = 12,
+    scenario: str = "latest",
+    includeStale: bool = True,
+) -> dict[str, Any] | JSONResponse:
+    return _dashboard_query(request, scope, cityIds, period, scenario, includeStale)
+
+
+@router.get("/dashboard/cities", response_model=None)
+def dashboard_cities(request: Request, period: int = 12, includeStale: bool = True) -> list[dict[str, Any]] | JSONResponse:
+    response = _dashboard_query(request, "global", None, period, "latest", includeStale)
+    return response if isinstance(response, JSONResponse) else response["cities"]
+
+
+@router.get("/dashboard/cities/{city_id}", response_model=None)
+def dashboard_city(city_id: str, request: Request, period: int = 12, includeStale: bool = True) -> dict[str, Any] | JSONResponse:
+    response = _dashboard_query(request, "city", city_id, period, "latest", includeStale)
+    if isinstance(response, JSONResponse):
+        return response
+    return response["cities"][0] if response["cities"] else {"cityId": city_id, "hasValidResult": False, "dataStatus": "missing"}
+
+
+@router.get("/dashboard/compare", response_model=None)
+def dashboard_compare(request: Request, cityIds: str | None = None, period: int = 12, includeStale: bool = True) -> dict[str, Any] | JSONResponse:
+    return _dashboard_query(request, "compare", cityIds, period, "latest", includeStale)
+
+
+@router.get("/dashboard/issues", response_model=None)
+def dashboard_issues(request: Request, period: int = 12, includeStale: bool = True) -> list[dict[str, Any]] | JSONResponse:
+    response = _dashboard_query(request, "global", None, period, "latest", includeStale)
+    return response if isinstance(response, JSONResponse) else response["alerts"]
+
+
+@router.get("/dashboard/policy-summary", response_model=None)
+def dashboard_policy_summary(request: Request, cityIds: str | None = None) -> dict[str, Any]:
+    ids = [item.strip() for item in (cityIds or "").split(",") if item.strip()]
+    return PolicyService(repository_from_request(request)).overview(ids or None)
+
+
+@router.get("/policies/overview", response_model=None)
+def policy_overview(request: Request, cityIds: str | None = None) -> dict[str, Any]:
+    ids = [item.strip() for item in (cityIds or "").split(",") if item.strip()]
+    return PolicyService(repository_from_request(request)).overview(ids or None)
+
+
+@router.get("/policies/cities/{city_id}", response_model=None)
+def policy_city_detail(city_id: str, request: Request) -> dict[str, Any]:
+    return PolicyService(repository_from_request(request)).city_detail(city_id)
+
+
+@router.get("/policies/sources", response_model=None)
+def list_policy_sources(request: Request, cityId: str | None = None) -> list[dict[str, Any]]:
+    return repository_from_request(request).list_data_sources(cityId)
+
+
+@router.post("/policies/sources", status_code=201)
+def create_policy_source(payload: DataSourceCreate, request: Request) -> dict[str, Any]:
+    return repository_from_request(request).create_data_source(payload.model_dump())
+
+
+@router.put("/policies/sources/{source_id}", response_model=None)
+def update_policy_source(source_id: str, payload: DataSourceUpdate, request: Request) -> dict[str, Any] | JSONResponse:
+    try:
+        return repository_from_request(request).update_data_source(source_id, payload.model_dump(exclude_none=True))
+    except KeyError:
+        return error_payload("NOT_FOUND", f"Data source not found: {source_id}")
+
+
+@router.get("/policies/documents", response_model=None)
+def list_policy_documents(request: Request, cityId: str | None = None) -> list[dict[str, Any]]:
+    return repository_from_request(request).list_policy_documents(cityId)
+
+
+@router.get("/policies/documents/{document_id}", response_model=None)
+def get_policy_document(document_id: str, request: Request) -> dict[str, Any] | JSONResponse:
+    try:
+        return repository_from_request(request).get_policy_document(document_id)
+    except KeyError:
+        return error_payload("NOT_FOUND", f"Policy document not found: {document_id}")
+
+
+@router.get("/policies/documents/{document_id}/content")
+def policy_document_content(document_id: str, request: Request) -> Response:
+    repository = repository_from_request(request)
+    try:
+        document = repository.get_policy_document(document_id)
+    except KeyError:
+        return error_payload("NOT_FOUND", f"Policy document not found: {document_id}")
+    file_path = repository.path.parent / document["storedPath"]
+    if not file_path.is_file():
+        return error_payload("NOT_FOUND", f"Policy file not found: {document_id}")
+    return FileResponse(file_path, media_type=document.get("mimeType"), filename=document.get("originalName"))
+
+
+@router.post("/policies/documents/upload", status_code=201, response_model=None)
+async def upload_policy_document(
+    request: Request,
+    cityId: str = Form(...),
+    source: str = Form(...),
+    file: UploadFile = File(...),
+) -> dict[str, Any] | JSONResponse:
+    try:
+        content = await file.read()
+        return PolicyService(repository_from_request(request)).upload_document(
+            city_id=cityId,
+            source=source,
+            original_name=file.filename or "policy",
+            mime_type=file.content_type or "application/octet-stream",
+            content=content,
+        )
+    except ValueError as error:
+        return JSONResponse(status_code=400, content={"error": {"code": "INVALID_POLICY_FILE", "message": str(error)}})
+
+
+@router.post("/policies/documents/{document_id}/parse", response_model=None)
+def parse_policy_document(document_id: str, payload: PolicyParseRequest, request: Request) -> dict[str, Any] | JSONResponse:
+    try:
+        return PolicyService(repository_from_request(request)).parse_document(
+            document_id,
+            [candidate.model_dump() for candidate in payload.candidates],
+        )
+    except KeyError:
+        return error_payload("NOT_FOUND", f"Policy document not found: {document_id}")
+    except ValueError as error:
+        return JSONResponse(status_code=409, content={"error": {"code": "POLICY_PARSE_ERROR", "message": str(error)}})
+
+
+@router.post("/policies/documents/{document_id}/facts/{fact_id}/review", response_model=None)
+def review_policy_fact(
+    document_id: str,
+    fact_id: str,
+    payload: PolicyReviewRequest,
+    request: Request,
+) -> dict[str, Any] | JSONResponse:
+    try:
+        return PolicyService(repository_from_request(request)).review_fact(
+            document_id,
+            fact_id,
+            decision=payload.decision,
+            reviewer=payload.reviewer,
+            source=payload.source,
+            effective_date=payload.effectiveDate,
+        )
+    except KeyError:
+        return error_payload("NOT_FOUND", f"Policy fact not found: {fact_id}")
+    except ValueError as error:
+        return JSONResponse(status_code=409, content={"error": {"code": "POLICY_REVIEW_ERROR", "message": str(error)}})
+
+
 @router.get("/model/u1")
 def model_u1() -> dict[str, Any]:
     catalog = load_parameter_catalog()
@@ -124,6 +319,16 @@ def get_scenario(project_id: str, scenario_id: str, request: Request) -> dict[st
         return error_payload("NOT_FOUND", f"Scenario not found: {scenario_id}")
 
 
+@router.get("/projects/{project_id}/scenarios/{scenario_id}/snapshots", response_model=None)
+def list_scenario_snapshots(project_id: str, scenario_id: str, request: Request) -> list[dict[str, Any]] | JSONResponse:
+    repository = repository_from_request(request)
+    try:
+        repository.get_scenario(project_id, scenario_id)
+        return repository.list_snapshots(project_id, scenario_id)
+    except KeyError:
+        return error_payload("NOT_FOUND", f"Scenario not found: {scenario_id}")
+
+
 @router.put("/projects/{project_id}/scenarios/{scenario_id}")
 def update_scenario(project_id: str, scenario_id: str, payload: ScenarioUpdate, request: Request) -> dict[str, Any]:
     repository = repository_from_request(request)
@@ -137,6 +342,16 @@ def update_scenario(project_id: str, scenario_id: str, payload: ScenarioUpdate, 
         return repository.update_scenario(project_id, scenario_id, data)
     except KeyError:
         return error_payload("NOT_FOUND", f"Scenario not found: {scenario_id}")
+
+
+@router.post("/projects/{project_id}/scenarios/{scenario_id}/confirm", response_model=None)
+def confirm_scenario(project_id: str, scenario_id: str, request: Request) -> dict[str, Any] | JSONResponse:
+    try:
+        return repository_from_request(request).confirm_scenario(project_id, scenario_id)
+    except KeyError:
+        return error_payload("NOT_FOUND", f"Scenario not found: {scenario_id}")
+    except ValueError as error:
+        return JSONResponse(status_code=409, content={"error": {"code": "SCENARIO_NOT_CONFIRMABLE", "message": str(error)}})
 
 
 @router.post("/projects/{project_id}/scenarios/{scenario_id}/calculate")

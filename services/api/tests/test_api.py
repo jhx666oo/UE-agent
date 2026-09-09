@@ -58,6 +58,30 @@ class U1ApiTests(unittest.TestCase):
         self.assertEqual(reloaded.status_code, 200)
         self.assertEqual(reloaded.json()["result"]["modelVersion"], "u1-excel-v2.1-parity")
 
+        second_calculation = self.client.post(f"/api/projects/{project_id}/scenarios/{scenario_id}/calculate")
+        self.assertEqual(second_calculation.status_code, 200)
+        snapshots = self.client.get(f"/api/projects/{project_id}/scenarios/{scenario_id}/snapshots")
+        self.assertEqual(snapshots.status_code, 200)
+        self.assertEqual(len(snapshots.json()), 2)
+        self.assertNotEqual(snapshots.json()[0]["snapshotId"], snapshots.json()[1]["snapshotId"])
+
+    def test_input_update_exposes_stale_state_and_preserves_snapshot_history(self):
+        project = self.client.post("/api/projects", json={"name": "stale API 测试", "city": "长沙"}).json()
+        scenario = self.client.post(f"/api/projects/{project['id']}/scenarios", json={"name": "基准"}).json()
+        calculation = self.client.post(f"/api/projects/{project['id']}/scenarios/{scenario['id']}/calculate")
+        self.assertEqual(calculation.status_code, 200)
+
+        updated = self.client.put(
+            f"/api/projects/{project['id']}/scenarios/{scenario['id']}",
+            json={"inputs": {"P1": 55}},
+        )
+        self.assertEqual(updated.status_code, 200)
+        self.assertEqual(updated.json()["status"], "stale")
+        self.assertIsNone(updated.json()["resultSnapshotId"])
+        self.assertIsNone(updated.json()["result"])
+        snapshots = self.client.get(f"/api/projects/{project['id']}/scenarios/{scenario['id']}/snapshots")
+        self.assertEqual(len(snapshots.json()), 1)
+
     def test_missing_project_and_required_input_are_explicit(self):
         missing = self.client.get("/api/projects/not-found")
         self.assertEqual(missing.status_code, 404)

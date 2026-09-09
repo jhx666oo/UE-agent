@@ -4,7 +4,7 @@ import { cva, type VariantProps } from "class-variance-authority";
 import { cn } from "@ue-agent/ui/lib/cn";
 
 const buttonVariants = cva(
-  "inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-md text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus-ring/40 disabled:pointer-events-none disabled:opacity-50",
+  "inline-flex items-center justify-center gap-1.5 whitespace-nowrap rounded-md text-[14px] font-normal leading-5 tracking-normal transition-[background-color,border-color,color,box-shadow,transform] duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-focus-ring/40 active:translate-y-px disabled:pointer-events-none disabled:opacity-50",
   {
     variants: {
       variant: {
@@ -15,9 +15,9 @@ const buttonVariants = cva(
         danger: "bg-danger text-white shadow-sm hover:bg-danger/90",
       },
       size: {
-        sm: "h-9 px-3 text-xs",
+        sm: "h-9 px-3.5",
         default: "h-10 px-4",
-        lg: "h-11 px-5",
+        lg: "h-11 px-5 text-[15px]",
       },
     },
     defaultVariants: {

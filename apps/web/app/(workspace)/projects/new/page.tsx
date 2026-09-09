@@ -13,6 +13,7 @@ import { createProject } from "@/lib/api";
 export default function NewProjectPage() {
   const router = useRouter();
   const [name, setName] = useState("");
+  const [cityId, setCityId] = useState("");
   const [city, setCity] = useState("");
   const [district, setDistrict] = useState("");
   const [baseMonth, setBaseMonth] = useState("");
@@ -31,12 +32,13 @@ export default function NewProjectPage() {
     try {
       const project = await createProject({
         name: name.trim(),
+        cityId: cityId.trim() || undefined,
         city: city.trim(),
         district: district.trim() || null,
         baseMonth: baseMonth || null,
         stationMode,
       });
-      router.push(`/projects/${project.id}/u1`);
+      router.push(`/projects/${project.id}`);
     } catch (submissionError) {
       setError(submissionError instanceof Error ? submissionError.message : "项目保存失败，请稍后重试");
       setSaving(false);
@@ -60,7 +62,7 @@ export default function NewProjectPage() {
         <Card>
         <CardHeader>
           <CardTitle>项目基本信息</CardTitle>
-          <CardDescription>项目创建后会自动生成基准场景，并进入 U1 参数测算工作台。</CardDescription>
+          <CardDescription>项目创建后会自动生成基准场景，并进入城市项目参数配置。</CardDescription>
         </CardHeader>
         <CardContent className="space-y-5">
           <div className="space-y-2">
@@ -72,6 +74,12 @@ export default function NewProjectPage() {
               <Label htmlFor="target-city">目标城市</Label>
               <Input id="target-city" value={city} onChange={(event) => setCity(event.target.value)} placeholder="输入城市名称" />
             </div>
+            <div className="space-y-2">
+              <Label htmlFor="city-id">城市标识（可选）</Label>
+              <Input id="city-id" value={cityId} onChange={(event) => setCityId(event.target.value)} placeholder="例如：changsha" />
+            </div>
+          </div>
+          <div className="grid gap-5 sm:grid-cols-2">
             <div className="space-y-2">
               <Label htmlFor="target-district">目标区县（可选）</Label>
               <Input id="target-district" value={district} onChange={(event) => setDistrict(event.target.value)} placeholder="例如：岳麓区" />

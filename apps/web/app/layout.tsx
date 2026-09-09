@@ -3,8 +3,8 @@ import type { ReactNode } from "react";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "UE-Agent｜长护险 UE 测算工作台",
-  description: "面向养老业务的长护险 UE 测算与城市选址工作台。",
+  title: "UE-Agent｜长护险经营决策总览",
+  description: "面向养老业务的长护险城市项目、政策资料与测算结果总览。",
 };
 
 export default function RootLayout({ children }: Readonly<{ children: ReactNode }>) {
