@@ -47,21 +47,54 @@
 >
 > 前端 :3000 进程代码已就绪，必要时同样 `lsof -ti:3000 | xargs kill -9 && pnpm dev`。
 
-## 待办（按优先级）
+## M5 接手后续（本轮已完成，均已推送）
 
-1. **真实浏览器端到端验收（M4 收尾）**：起 `pnpm dev:all`（或分别 `pnpm api:dev` + `pnpm dev`），浏览器验证：
-   - 政策页新增来源 → 立即抓取（可用本地起一个静态页测试，或真实政府官网 URL）→ 抓取历史出现记录与建议值
-   - 城市测算页出现灰色建议值 → 点击「采用建议值」→ 状态变已采用、场景变待重算 → 运行测算 → 新快照进仪表盘
-   - 手工改爬虫字段 → 状态变「已手动覆盖」且建议值保留
-   - 旧数据里两个测试项目（「进程验证项目」「SQLite 重启验证」）可考虑清理（注意 PRD 禁止静默删除，需用户确认）
-2. **`/settings` 页处理**：PRD 说参数设置不作为主导航；页面本身保留为字段字典只读参考页没问题，但建议改为从城市测算页可达，或直接下线该路由
-3. **旧导航测试清理**：`components/u1-workbench.tsx` 与 `components/u1-parameter-field.tsx` 已被 `FieldValueControl`/`city-project-workbench` 取代，仅 `/u1` 兼容跳转引用；确认无引用后删除（连带 `lib/u1.ts`、对应测试）
-4. **仪表盘筛选进 URL**（PRD 9.2/nuqs）：dashboard-filters 的 scope/cityIds/period 目前不进 URL，「城市对比」导航用 `/?scope=compare`，需要 nuqs 接住并联动
-5. **PRD 16.6 城市级字段值接口**：现在是 `/scenarios/{id}/values`（场景级），PRD 写的是 `/cities/{cityId}/values`；若产品确认一座城市一个主对象，可在路由层加别名，不动存储
-6. **导出接口**（PRD 16.7 CSV/JSON/ZIP）完全未做，P0 清单项
-7. **错误结构补全**：PRD 16.8 要求 error 带 field/requestId，现在只有 code/message
-8. **B12 GR 公关费用**：参数字典标「公式自动」但 Excel E47 是常量 5000，引擎目前当普通必填输入读（engine.py 中 `B12` 仍 required）。需要业务确认后决定：改为只读常量公式 + issue 标记，属于模型语义变更，勿擅自改（AGENTS.md 门禁）
-9. **提交纪律**：每个里程碑单独 commit + push（push 偶发 Empty reply，重试即可）；测试门禁 = `pnpm model:test` + `pnpm api:test`（uv）+ `apps/web` 下 vitest/tsc/eslint
+本轮由接手 agent 完成，4 个提交：`5d67234` → `e1991fb` → `0b26cd3` → `74655c9`。
+门禁：后端 **110 项**、前端 **24 项**、typecheck、eslint 全绿。
+
+### 发现并修复 P0 bug：抓取接口 500（e1991fb）
+- **现象**：`POST /api/policies/sources/{id}/crawl` 返回 500，日志 `sqlite3.OperationalError: no such column: lastFetchedAt`
+- **根因**：`SqliteProjectRepository.update_data_source` 把 camelCase 的 API 字段名直接拼进 SQL 列名（`SET lastFetchedAt = ?`），而 003 迁移建的是 snake_case 列（`last_fetched_at`）。`name/url/status` 等单词两边同名，所以一直没暴露
+- **修复**：新增 `SOURCE_COLUMN_BY_KEY`（`SQLITE_SOURCE_KEYS` 的反向表），拼列名前先映射
+- **为什么 101 项测试没发现**：`test_crawl_api.py` 用的是 `JsonProjectRepository`（纯 dict，不做 SQL 映射），而生产默认走 SQLite。已补回归测试 `test_data_source_crawl_status_columns_use_snake_case_columns`
+- **教训**：抓取链路的测试要覆盖 SQLite 仓储，不能只跑 JSON 仓储
+
+### 端到端验收（原待办 1，已完成）
+走通「抓取 → 建议值 → 采用 → 手工覆盖 → 重算 → 仪表盘」全链路，均符合 PRD：
+- 抓取 HTTP 200，标题 / 指纹 / 原文落盘正常
+- 建议值解析：P1=60、P2=0.8（80% 正确换算为 0-1）、P8=2
+- 灰色建议值状态 `suggestion_ready`，未采用前不参与计算
+- 采用 P1：50→60，状态 `accepted`，**场景自动转 `stale`**
+- 手工改 P2：状态 `overridden`，**建议值仍保留**（PRD 15.3）
+- 重算：24 个月，`u1-excel-v2.1-parity`；仪表盘 200，summary/cities/trend 正常
+- 验收后已把测试期写入的脏值恢复（P1=50、P2=0.8）并重算
+
+> 抓取需要公网 URL（SSRF 默认拒绝本机/私有地址）。`crawl_allow_private` 是仅测试用的放行开关，
+> 通过 `app.state.crawl_allow_private = True` 生效，生产路径保持拒绝。真实公网抓取用 example.com 验证过。
+
+### 清理 /u1 死代码（原待办 3，已完成）
+删除 `u1-workbench.tsx`、`u1-workbench.test.tsx`、`u1-parameter-field.tsx`、`lib/u1.ts`、`lib/u1.test.ts`（共 271 行）。
+⚠️ `u1-result-panel.tsx` **仍被 `city-project-workbench` 使用，必须保留**——不要因为名字带 u1 就一起删。
+
+### 导出接口（原待办 6，已完成）
+`GET /api/policies/export`，支持 `format=csv|json`、`dataset=fields|sources|artifacts`、`cityId` / `sourceId` 过滤：
+- CSV 带 UTF-8 BOM，Excel 中文正常（PRD 20.4）
+- 建议值 / 当前实际值 / 值状态 / 建议来源 / 采集时间分列（PRD 11.12）
+- artifact 用 `artifactId` 字段（不是 `id`）
+- 非法 format / dataset 返回 400 + `UNSUPPORTED_EXPORT_FORMAT` / `UNSUPPORTED_EXPORT_DATASET`
+
+### 错误结构补全（原待办 7，已完成）
+`error_payload` 增加 `requestId`（uuid4）与可选 `field`；查询参数与字段校验错误带上 field，`NOT_FOUND` 不带。
+
+## 待办（剩余，按优先级）
+
+1. **`/settings` 页处理**：PRD 说参数设置不作为主导航；页面保留为字段字典只读参考页没问题，但建议改为从城市测算页可达，或直接下线该路由
+2. **仪表盘筛选进 URL**（PRD 9.2/nuqs）：dashboard-filters 的 scope/cityIds/period 目前不进 URL，「城市对比」导航用 `/?scope=compare`，需要 nuqs 接住并联动。nuqs 在规范白名单内，但属新增依赖，需说明复用判断
+3. **PRD 16.6 城市级字段值接口**：现在是 `/scenarios/{id}/values`（场景级），PRD 写的是 `/cities/{cityId}/values`；若产品确认一座城市一个主对象，可在路由层加别名，不动存储
+4. **ZIP 导出**（PRD 16.7，P1）：原始抓取文件打包导出；CSV/JSON 已可用
+5. **旧测试数据清理**：库里「进程验证项目」「SQLite 重启验证」两个测试项目，以及本轮 E2E 留下的两条来源与抓取记录（PRD 禁止静默删除，需用户确认后再删）
+6. **B12 GR 公关费用**：参数字典标「公式自动」但 Excel E47 是常量 5000，引擎目前当普通必填输入读（engine.py 中 `B12` 仍 required）。需业务确认后决定：改为只读常量公式 + issue 标记，属模型语义变更，勿擅自改（AGENTS.md 门禁）
+7. **提交纪律**：每个里程碑单独 commit + push（push 偶发 Empty reply，重试即可）；测试门禁 = `pnpm model:test` + `pnpm api:test`（uv）+ `apps/web` 下 vitest/tsc/eslint
 
 ## 验证命令速查
 
