@@ -10,7 +10,12 @@ from fastapi.responses import JSONResponse
 from ..domain.u1.engine import DEFAULT_MODEL_VERSION, calculate_u1
 from ..domain.u1.issues import load_known_issues
 from ..domain.u1.models import FormulaValue, ModelIssue, MonthlyProjection, U1Result
-from ..domain.u1.spec import load_json_spec, load_parameter_catalog
+from ..domain.u1.spec import (
+    BLOCK_ORDER,
+    ENUM_PARAMETER_OPTIONS,
+    load_json_spec,
+    load_parameter_catalog,
+)
 from ..domain.dashboard.aggregator import build_dashboard_overview
 from ..domain.policy.service import PolicyService
 from ..repository import ProjectRepository
@@ -286,6 +291,58 @@ def model_u1() -> dict[str, Any]:
     }
 
 
+def field_payload(entry: dict[str, Any]) -> dict[str, Any]:
+    """字段控制契约：只读、可编辑与枚举选项由 sourceType 和字典共同决定。"""
+    read_only = entry["sourceType"] == "公式自动"
+    return {
+        "fieldId": entry["id"],
+        "name": entry["name"],
+        "unit": entry["unit"],
+        "excelCell": entry["excelCell"],
+        "sourceType": entry["sourceType"],
+        "block": entry["block"],
+        "blockOrder": entry["blockOrder"],
+        "stage": entry["stage"],
+        "valueType": entry["valueType"],
+        "required": entry["required"],
+        "editable": not read_only,
+        "readOnly": read_only,
+        "options": entry.get("options"),
+    }
+
+
+@router.get("/fields", response_model=None)
+def list_fields(block: str | None = None) -> dict[str, Any] | JSONResponse:
+    if block is not None and block not in BLOCK_ORDER:
+        return error_payload("INVALID_QUERY", f"block 必须是 {'、'.join(BLOCK_ORDER)} 之一")
+    catalog = load_parameter_catalog()
+    entries = list(catalog.values())
+    if block is not None:
+        entries = [entry for entry in entries if entry["block"] == block]
+    return {"modelVersion": DEFAULT_MODEL_VERSION, "fields": [field_payload(entry) for entry in entries]}
+
+
+def validate_scenario_inputs(inputs: Mapping[str, Any]) -> JSONResponse | None:
+    """按参数字典校验输入：拒绝公式字段、未知编号和超出枚举的值。"""
+    catalog = load_parameter_catalog()
+    for field_id, value in inputs.items():
+        entry = catalog.get(field_id)
+        if entry is None:
+            return error_payload("UNKNOWN_FIELD", f"未知参数编号：{field_id}")
+        if entry["sourceType"] == "公式自动":
+            return error_payload(
+                "FORMULA_FIELD_READ_ONLY",
+                f"{field_id} {entry['name']} 是公式自动字段，不能在普通填写框修改",
+            )
+        expected_options = ENUM_PARAMETER_OPTIONS.get(field_id)
+        if expected_options is not None and value is not None and value not in expected_options:
+            return error_payload(
+                "INVALID_FIELD_VALUE",
+                f"{field_id} {entry['name']} 只能是 {'、'.join(expected_options)}，收到 {value!r}",
+            )
+    return None
+
+
 @router.get("/projects")
 def list_projects(request: Request) -> list[dict[str, Any]]:
     return repository_from_request(request).list_projects()
@@ -310,7 +367,11 @@ def create_scenario(project_id: str, payload: ScenarioCreate, request: Request) 
     try:
         repository.get_project(project_id)
         inputs = baseline_inputs()
-        inputs.update(payload.inputs or {})
+        provided = dict(payload.inputs or {})
+        validation = validate_scenario_inputs(provided)
+        if validation is not None:
+            return validation
+        inputs.update(provided)
         return repository.create_scenario(project_id, {"name": payload.name, "inputs": inputs})
     except KeyError:
         return error_payload("NOT_FOUND", f"Project not found: {project_id}")
@@ -342,7 +403,11 @@ def update_scenario(project_id: str, scenario_id: str, payload: ScenarioUpdate, 
         data = payload.model_dump(exclude_none=True)
         if "inputs" in data:
             merged_inputs = dict(current["inputs"])
-            merged_inputs.update(data["inputs"])
+            incoming = dict(data["inputs"])
+            validation = validate_scenario_inputs(incoming)
+            if validation is not None:
+                return validation
+            merged_inputs.update(incoming)
             data["inputs"] = merged_inputs
         return repository.update_scenario(project_id, scenario_id, data)
     except KeyError:

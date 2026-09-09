@@ -15,6 +15,30 @@ EXPECTED_PARAMETER_IDS = (
     + [f"Z{i}" for i in range(1, 6)]
 )
 
+# PRD 14.1 参数分组：编号前缀 -> 分组名称（顺序即页面展示顺序）。
+BLOCK_ORDER = (
+    "城市与市场",
+    "政策准入",
+    "站点空间",
+    "成本参数",
+    "阶段参数",
+    "效率与风险",
+    "辅助收入",
+    "战略情景",
+)
+BLOCK_BY_PREFIX = {prefix: block for prefix, block in zip("CPSBDEAZ", BLOCK_ORDER)}
+# 值只能从固定清单中选择的枚举参数（PRD 12.3 字段字典）。
+ENUM_PARAMETER_OPTIONS: dict[str, tuple[str, ...]] = {
+    "C2": ("一线", "新一线", "二线", "三线"),
+    "C12": ("盈利型", "政治型", "混合型"),
+    "P10": ("是", "否"),
+    "P11": ("是", "否"),
+    "B3": ("挂证", "全职", "兼任"),
+    "D4": ("线性", "S曲线"),
+    "Z1": ("自营", "收购"),
+    "Z5": ("乐观", "基准", "悲观"),
+}
+
 
 def repository_root() -> Path:
     for parent in (Path(__file__).resolve(), *Path(__file__).resolve().parents):
@@ -51,7 +75,7 @@ def validate_parameter_catalog(catalog: dict[str, dict[str, Any]]) -> list[str]:
     errors: list[str] = []
     if tuple(catalog) != tuple(EXPECTED_PARAMETER_IDS):
         errors.append("Parameter IDs must cover C/P/S/B/D/E/A/Z groups in Excel order")
-    required_fields = {"id", "name", "unit", "excelCell", "inputKind", "valueType", "stage", "sourceType", "required", "parityStatus"}
+    required_fields = {"id", "name", "unit", "excelCell", "inputKind", "valueType", "stage", "sourceType", "required", "parityStatus", "block", "blockOrder"}
     for parameter_id in EXPECTED_PARAMETER_IDS:
         entry = catalog.get(parameter_id)
         if entry is None:
@@ -60,6 +84,20 @@ def validate_parameter_catalog(catalog: dict[str, dict[str, Any]]) -> list[str]:
         missing = sorted(required_fields - entry.keys())
         if missing:
             errors.append(f"{parameter_id} missing fields: {','.join(missing)}")
+            continue
         if not re.fullmatch(r"控制台!E\d+", str(entry.get("excelCell", ""))):
             errors.append(f"{parameter_id} has invalid Excel cell: {entry.get('excelCell')}")
+        expected_block = BLOCK_BY_PREFIX.get(parameter_id[0])
+        if entry.get("block") != expected_block:
+            errors.append(f"{parameter_id} block must be {expected_block}, got {entry.get('block')}")
+        expected_order = BLOCK_ORDER.index(expected_block) + 1 if expected_block else None
+        if entry.get("blockOrder") != expected_order:
+            errors.append(f"{parameter_id} blockOrder must be {expected_order}, got {entry.get('blockOrder')}")
+        if parameter_id in ENUM_PARAMETER_OPTIONS:
+            expected_options = list(ENUM_PARAMETER_OPTIONS[parameter_id])
+            options = entry.get("options")
+            if not isinstance(options, list) or options != expected_options:
+                errors.append(f"{parameter_id} options must be {expected_options}, got {options}")
+            elif len(set(options)) != len(options):
+                errors.append(f"{parameter_id} options contain duplicates")
     return errors
