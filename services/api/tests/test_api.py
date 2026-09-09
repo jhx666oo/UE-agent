@@ -30,6 +30,22 @@ class U1ApiTests(unittest.TestCase):
         self.assertEqual(len(model.json()["parameters"]), 75)
         self.assertEqual(model.json()["baselineInputs"]["P1"], 50)
 
+    def test_error_payload_includes_field_and_request_id(self):
+        """PRD 16.8：错误返回 code / message / field / requestId。"""
+        invalid = self.client.get("/api/dashboard/overview?period=99")
+        self.assertEqual(invalid.status_code, 400)
+        error = invalid.json()["error"]
+        self.assertEqual(error["code"], "INVALID_QUERY")
+        self.assertEqual(error["field"], "period")
+        self.assertTrue(error["requestId"])
+
+        missing = self.client.get("/api/projects/not-exist")
+        self.assertEqual(missing.status_code, 404)
+        not_found = missing.json()["error"]
+        self.assertEqual(not_found["code"], "NOT_FOUND")
+        self.assertTrue(not_found["requestId"])
+        self.assertNotIn("field", not_found)
+
     def test_create_calculate_and_reload_scenario(self):
         project_response = self.client.post(
             "/api/projects",

@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv
 import io
 import json
+import uuid
 from dataclasses import fields, is_dataclass
 from datetime import datetime, timezone
 from collections.abc import Mapping
@@ -85,8 +86,15 @@ def result_to_dict(result: U1Result) -> dict[str, Any]:
     }
 
 
-def error_payload(code: str, message: str) -> JSONResponse:
-    return JSONResponse(status_code=404 if code == "NOT_FOUND" else 400, content={"error": {"code": code, "message": message}})
+def error_payload(code: str, message: str, field: str | None = None) -> JSONResponse:
+    """PRD 16.8：错误返回稳定错误码、可读提示、相关字段与请求标识。"""
+    error: dict[str, Any] = {"code": code, "message": message, "requestId": uuid.uuid4().hex}
+    if field:
+        error["field"] = field
+    return JSONResponse(
+        status_code=404 if code == "NOT_FOUND" else 400,
+        content={"error": error},
+    )
 
 
 @router.get("/health")
@@ -104,16 +112,16 @@ def _dashboard_query(
     include_stale: bool,
 ) -> dict[str, Any] | JSONResponse:
     if scope not in {"global", "city", "compare"}:
-        return error_payload("INVALID_QUERY", "scope 必须是 global、city 或 compare")
+        return error_payload("INVALID_QUERY", "scope 必须是 global、city 或 compare", field="scope")
     if period not in {12, 24}:
-        return error_payload("INVALID_QUERY", "period 必须是 12 或 24")
+        return error_payload("INVALID_QUERY", "period 必须是 12 或 24", field="period")
     if scenario != "latest":
-        return error_payload("INVALID_QUERY", "当前仅支持 scenario=latest")
+        return error_payload("INVALID_QUERY", "当前仅支持 scenario=latest", field="scenario")
     ids = [item.strip() for item in (city_ids or "").split(",") if item.strip()]
     if scope == "city" and len(ids) != 1:
-        return error_payload("INVALID_QUERY", "city 视图需要一个 cityIds")
+        return error_payload("INVALID_QUERY", "city 视图需要一个 cityIds", field="cityIds")
     if scope == "compare" and not ids:
-        return error_payload("INVALID_QUERY", "compare 视图至少需要一个 cityIds")
+        return error_payload("INVALID_QUERY", "compare 视图至少需要一个 cityIds", field="cityIds")
     repository = repository_from_request(request)
     policy_summary = PolicyService(repository).overview(ids if scope != "global" and ids else None)
     return build_dashboard_overview(
@@ -518,17 +526,19 @@ def validate_scenario_inputs(inputs: Mapping[str, Any]) -> JSONResponse | None:
     for field_id, value in inputs.items():
         entry = catalog.get(field_id)
         if entry is None:
-            return error_payload("UNKNOWN_FIELD", f"未知参数编号：{field_id}")
+            return error_payload("UNKNOWN_FIELD", f"未知参数编号：{field_id}", field=field_id)
         if entry["sourceType"] == "公式自动":
             return error_payload(
                 "FORMULA_FIELD_READ_ONLY",
                 f"{field_id} {entry['name']} 是公式自动字段，不能在普通填写框修改",
+                field=field_id,
             )
         expected_options = ENUM_PARAMETER_OPTIONS.get(field_id)
         if expected_options is not None and value is not None and value not in expected_options:
             return error_payload(
                 "INVALID_FIELD_VALUE",
                 f"{field_id} {entry['name']} 只能是 {'、'.join(expected_options)}，收到 {value!r}",
+                field=field_id,
             )
     return None
 
@@ -698,11 +708,12 @@ def accept_field_suggestion(
     catalog = load_parameter_catalog()
     entry = catalog.get(field_id)
     if entry is None:
-        return error_payload("UNKNOWN_FIELD", f"未知参数编号：{field_id}")
+        return error_payload("UNKNOWN_FIELD", f"未知参数编号：{field_id}", field=field_id)
     if entry["sourceType"] == "公式自动":
         return error_payload(
             "FORMULA_FIELD_READ_ONLY",
             f"{field_id} {entry['name']} 是公式自动字段，不能采用建议值",
+            field=field_id,
         )
     try:
         repository.accept_field_suggestion(project_id, scenario_id, field_id)
