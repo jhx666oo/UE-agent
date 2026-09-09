@@ -299,6 +299,53 @@ class SqliteRepositoryBehaviourTests(unittest.TestCase):
 
         self.assertEqual([s["name"] for s in self.repository.get_project(project["id"])["scenarios"]], ["对方新建"])
 
+    def test_field_suggestion_lifecycle_persists_and_records_history(self) -> None:
+        project = _seed_project(self.repository)
+        scenario = self.repository.create_scenario(project["id"], {"name": "基准", "inputs": {"C3": 1000}})
+        source = {"sourceName": "长沙市统计局", "url": "https://example.gov.cn"}
+
+        row = self.repository.save_field_suggestion(scenario["id"], "C3", 820, source)
+        self.assertEqual(row["valueState"], "suggestion_ready")
+        self.assertEqual(row["suggestedValue"], 820)
+
+        # 建议值不写当前输入，计算引擎继续使用 currentValue
+        inputs = self.repository.get_scenario(project["id"], scenario["id"])["inputs"]
+        self.assertEqual(inputs["C3"], 1000)
+
+        accepted = self.repository.accept_field_suggestion(project["id"], scenario["id"], "C3")
+        self.assertEqual(accepted["valueState"], "accepted")
+        scenario_after = self.repository.get_scenario(project["id"], scenario["id"])
+        self.assertEqual(scenario_after["inputs"]["C3"], 820)
+        self.assertEqual(scenario_after["status"], "draft")
+
+        self.repository.set_field_value(project["id"], scenario["id"], "C3", 850)
+        overridden = {r["fieldId"]: r for r in self.repository.list_field_values(scenario["id"])}["C3"]
+        self.assertEqual(overridden["valueState"], "overridden")
+        self.assertEqual(overridden["suggestedValue"], 820)
+
+        # 重开数据库后建议值、状态与历史仍然完整
+        reopened = SqliteProjectRepository(self.path)
+        history = reopened.list_field_value_history(scenario["id"], "C3")
+        self.assertEqual(
+            [(entry["action"], entry["newValue"]) for entry in history],
+            [("suggestion_updated", 820), ("accepted", 820), ("overridden", 850)],
+        )
+        with self.assertRaises(ValueError):
+            reopened.accept_field_suggestion(project["id"], scenario["id"], "C10")
+
+    def test_plain_scenario_input_update_marks_crawler_suggestion_overridden(self) -> None:
+        project = _seed_project(self.repository)
+        scenario = self.repository.create_scenario(project["id"], {"name": "基准", "inputs": {"C3": 1000}})
+        self.repository.save_field_suggestion(scenario["id"], "C3", 820, {"sourceName": "统计局"})
+
+        self.repository.update_scenario(project["id"], scenario["id"], {"inputs": {"C3": 900}})
+        self.repository.mark_field_overridden(scenario["id"], "C3", 1000, 900)
+
+        row = {r["fieldId"]: r for r in self.repository.list_field_values(scenario["id"])}["C3"]
+        self.assertEqual(row["valueState"], "overridden")
+        self.assertEqual(row["suggestedValue"], 820)
+        self.assertEqual(self.repository.get_scenario(project["id"], scenario["id"])["inputs"]["C3"], 900)
+
 
 class SqliteRepositoryParityTests(unittest.TestCase):
     """The SQLite repository must behave like the JSON repository it replaces."""

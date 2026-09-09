@@ -245,6 +245,37 @@ class SqliteProjectRepository:
             raise KeyError(scenario_id)
         return row
 
+    @staticmethod
+    def _require_scenario(connection: sqlite3.Connection, scenario_id: str) -> None:
+        if connection.execute("SELECT 1 FROM scenarios WHERE id = ?", (scenario_id,)).fetchone() is None:
+            raise KeyError(scenario_id)
+
+    @staticmethod
+    def _write_scenario_inputs(
+        connection: sqlite3.Connection, scenario_id: str, inputs: dict[str, Any]
+    ) -> None:
+        """写入新输入并按是否有历史结果标记 stale/draft（与 update_scenario 同一套规则）。"""
+        row = connection.execute(
+            "SELECT result_snapshot_id, result_json FROM scenarios WHERE id = ?", (scenario_id,)
+        ).fetchone()
+        had_current_result = row["result_snapshot_id"] is not None or row["result_json"] is not None
+        now = utc_now()
+        connection.execute(
+            "UPDATE scenarios SET status = ?, inputs_json = ?, input_snapshot_json = ?, result_json = NULL,"
+            " result_snapshot_id = NULL, calculated_at = NULL, updated_at = ? WHERE id = ?",
+            (
+                "stale" if had_current_result else "draft",
+                _dump(inputs),
+                _dump(inputs),
+                now,
+                scenario_id,
+            ),
+        )
+        connection.execute(
+            "UPDATE projects SET updated_at = ? WHERE id = (SELECT project_id FROM scenarios WHERE id = ?)",
+            (now, scenario_id),
+        )
+
     def create_project(self, data: Mapping[str, Any]) -> dict[str, Any]:
         now = utc_now()
         project = {
@@ -668,3 +699,222 @@ class SqliteProjectRepository:
             connection.execute("UPDATE policy_facts SET updated_at = ? WHERE id = ?", (utc_now(), fact_id))
             row = connection.execute("SELECT * FROM policy_facts WHERE id = ?", (fact_id,)).fetchone()
             return self._fact_dict(row)
+
+    # ---------- 字段值（PRD 12.2 四元组与采用/覆盖历史） ----------
+
+    @staticmethod
+    def _field_value_dict(row: sqlite3.Row) -> dict[str, Any]:
+        return {
+            "scenarioId": row["scenario_id"],
+            "fieldId": row["field_id"],
+            "suggestedValue": _load(row["suggested_value_json"]),
+            "suggestedSource": _load(row["suggested_source_json"]),
+            "suggestedAt": row["suggested_at"],
+            "valueState": row["value_state"],
+            "updatedAt": row["updated_at"],
+        }
+
+    @staticmethod
+    def _history_dict(row: sqlite3.Row) -> dict[str, Any]:
+        return {
+            "id": row["id"],
+            "scenarioId": row["scenario_id"],
+            "fieldId": row["field_id"],
+            "action": row["action"],
+            "oldValue": _load(row["old_value_json"]),
+            "newValue": _load(row["new_value_json"]),
+            "source": _load(row["source_json"]),
+            "actedAt": row["acted_at"],
+        }
+
+    @staticmethod
+    def _insert_history(
+        connection: sqlite3.Connection,
+        scenario_id: str,
+        field_id: str,
+        action: str,
+        old_value: Any,
+        new_value: Any,
+        source: Any,
+    ) -> None:
+        connection.execute(
+            "INSERT INTO scenario_field_value_history (id, scenario_id, field_id, action, old_value_json,"
+            " new_value_json, source_json, acted_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                new_id("fvh"),
+                scenario_id,
+                field_id,
+                action,
+                _dump(old_value),
+                _dump(new_value),
+                _dump(source),
+                utc_now(),
+            ),
+        )
+
+    def list_field_values(self, scenario_id: str) -> list[dict[str, Any]]:
+        with self._db() as connection:
+            rows = connection.execute(
+                "SELECT * FROM scenario_field_values WHERE scenario_id = ? ORDER BY field_id", (scenario_id,)
+            ).fetchall()
+        return [self._field_value_dict(row) for row in rows]
+
+    def save_field_suggestion(
+        self, scenario_id: str, field_id: str, value: Any, source: Mapping[str, Any]
+    ) -> dict[str, Any]:
+        now = utc_now()
+        with self._db() as connection:
+            self._require_scenario(connection, scenario_id)
+            old = connection.execute(
+                "SELECT suggested_value_json FROM scenario_field_values WHERE scenario_id = ? AND field_id = ?",
+                (scenario_id, field_id),
+            ).fetchone()
+            connection.execute(
+                "INSERT INTO scenario_field_values (scenario_id, field_id, suggested_value_json,"
+                " suggested_source_json, suggested_at, value_state, updated_at)"
+                " VALUES (?, ?, ?, ?, ?, 'suggestion_ready', ?)"
+                " ON CONFLICT (scenario_id, field_id) DO UPDATE SET"
+                " suggested_value_json = excluded.suggested_value_json,"
+                " suggested_source_json = excluded.suggested_source_json,"
+                " suggested_at = excluded.suggested_at,"
+                " value_state = 'suggestion_ready', updated_at = excluded.updated_at",
+                (scenario_id, field_id, _dump(value), _dump(dict(source)), now, now),
+            )
+            self._insert_history(
+                connection,
+                scenario_id,
+                field_id,
+                "suggestion_updated",
+                _load(old["suggested_value_json"]) if old else None,
+                value,
+                dict(source),
+            )
+            row = connection.execute(
+                "SELECT * FROM scenario_field_values WHERE scenario_id = ? AND field_id = ?",
+                (scenario_id, field_id),
+            ).fetchone()
+            return self._field_value_dict(row)
+
+    def accept_field_suggestion(self, project_id: str, scenario_id: str, field_id: str) -> dict[str, Any]:
+        with self._db() as connection:
+            self._get_scenario_row(connection, project_id, scenario_id)
+            row = connection.execute(
+                "SELECT * FROM scenario_field_values WHERE scenario_id = ? AND field_id = ?",
+                (scenario_id, field_id),
+            ).fetchone()
+            if row is None or row["suggested_value_json"] is None:
+                raise ValueError("SUGGESTION_NOT_AVAILABLE")
+            scenario = connection.execute(
+                "SELECT inputs_json FROM scenarios WHERE id = ?", (scenario_id,)
+            ).fetchone()
+            inputs = _load(scenario["inputs_json"], {})
+            old_value = inputs.get(field_id)
+            accepted_value = _load(row["suggested_value_json"])
+            inputs[field_id] = accepted_value
+            self._write_scenario_inputs(connection, scenario_id, inputs)
+            now = utc_now()
+            connection.execute(
+                "UPDATE scenario_field_values SET value_state = 'accepted', updated_at = ?"
+                " WHERE scenario_id = ? AND field_id = ?",
+                (now, scenario_id, field_id),
+            )
+            self._insert_history(
+                connection,
+                scenario_id,
+                field_id,
+                "accepted",
+                old_value,
+                accepted_value,
+                _load(row["suggested_source_json"]),
+            )
+            updated = connection.execute(
+                "SELECT * FROM scenario_field_values WHERE scenario_id = ? AND field_id = ?",
+                (scenario_id, field_id),
+            ).fetchone()
+            return self._field_value_dict(updated)
+
+    def set_field_value(
+        self, project_id: str, scenario_id: str, field_id: str, value: Any
+    ) -> dict[str, Any] | None:
+        with self._db() as connection:
+            self._get_scenario_row(connection, project_id, scenario_id)
+            row = connection.execute(
+                "SELECT * FROM scenario_field_values WHERE scenario_id = ? AND field_id = ?",
+                (scenario_id, field_id),
+            ).fetchone()
+            scenario = connection.execute(
+                "SELECT inputs_json FROM scenarios WHERE id = ?", (scenario_id,)
+            ).fetchone()
+            inputs = _load(scenario["inputs_json"], {})
+            old_value = inputs.get(field_id)
+            inputs[field_id] = value
+            self._write_scenario_inputs(connection, scenario_id, inputs)
+            if row is not None:
+                now = utc_now()
+                connection.execute(
+                    "UPDATE scenario_field_values SET value_state = 'overridden', updated_at = ?"
+                    " WHERE scenario_id = ? AND field_id = ?",
+                    (now, scenario_id, field_id),
+                )
+                self._insert_history(
+                    connection,
+                    scenario_id,
+                    field_id,
+                    "overridden",
+                    old_value,
+                    value,
+                    _load(row["suggested_source_json"]),
+                )
+                updated = connection.execute(
+                    "SELECT * FROM scenario_field_values WHERE scenario_id = ? AND field_id = ?",
+                    (scenario_id, field_id),
+                ).fetchone()
+                return self._field_value_dict(updated)
+            self._insert_history(connection, scenario_id, field_id, "manual_set", old_value, value, None)
+            return None
+
+    def mark_field_overridden(
+        self, scenario_id: str, field_id: str, old_value: Any, new_value: Any
+    ) -> dict[str, Any] | None:
+        with self._db() as connection:
+            self._require_scenario(connection, scenario_id)
+            row = connection.execute(
+                "SELECT * FROM scenario_field_values WHERE scenario_id = ? AND field_id = ?",
+                (scenario_id, field_id),
+            ).fetchone()
+            if row is None:
+                return None
+            now = utc_now()
+            connection.execute(
+                "UPDATE scenario_field_values SET value_state = 'overridden', updated_at = ?"
+                " WHERE scenario_id = ? AND field_id = ?",
+                (now, scenario_id, field_id),
+            )
+            self._insert_history(
+                connection,
+                scenario_id,
+                field_id,
+                "overridden",
+                old_value,
+                new_value,
+                _load(row["suggested_source_json"]),
+            )
+            updated = connection.execute(
+                "SELECT * FROM scenario_field_values WHERE scenario_id = ? AND field_id = ?",
+                (scenario_id, field_id),
+            ).fetchone()
+            return self._field_value_dict(updated)
+
+    def list_field_value_history(self, scenario_id: str, field_id: str | None = None) -> list[dict[str, Any]]:
+        clauses = ["scenario_id = ?"]
+        params: list[Any] = [scenario_id]
+        if field_id is not None:
+            clauses.append("field_id = ?")
+            params.append(field_id)
+        with self._db() as connection:
+            rows = connection.execute(
+                f"SELECT * FROM scenario_field_value_history WHERE {' AND '.join(clauses)}"
+                " ORDER BY acted_at ASC, id ASC",
+                params,
+            ).fetchall()
+        return [self._history_dict(row) for row in rows]

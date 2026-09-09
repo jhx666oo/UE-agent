@@ -189,6 +189,43 @@ def migrate_json_to_sqlite(json_path: Path, database_path: Path) -> MigrationRep
                     ),
                 )
 
+            for row in payload.get("fieldValues", []):
+                connection.execute(
+                    "INSERT INTO scenario_field_values (scenario_id, field_id, suggested_value_json,"
+                    " suggested_source_json, suggested_at, value_state, updated_at)"
+                    " VALUES (?, ?, ?, ?, ?, ?, ?)"
+                    " ON CONFLICT (scenario_id, field_id) DO UPDATE SET"
+                    " suggested_value_json = excluded.suggested_value_json,"
+                    " suggested_source_json = excluded.suggested_source_json,"
+                    " suggested_at = excluded.suggested_at,"
+                    " value_state = excluded.value_state, updated_at = excluded.updated_at",
+                    (
+                        _text(row, "scenarioId"),
+                        _text(row, "fieldId"),
+                        _dump(row.get("suggestedValue")),
+                        _dump(row.get("suggestedSource")),
+                        row.get("suggestedAt"),
+                        _text(row, "valueState", "suggestion_ready"),
+                        _text(row, "updatedAt"),
+                    ),
+                )
+
+            for entry in payload.get("fieldValueHistory", []):
+                connection.execute(
+                    "INSERT INTO scenario_field_value_history (id, scenario_id, field_id, action,"
+                    " old_value_json, new_value_json, source_json, acted_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        _text(entry, "id"),
+                        _text(entry, "scenarioId"),
+                        _text(entry, "fieldId"),
+                        _text(entry, "action"),
+                        _dump(entry.get("oldValue")),
+                        _dump(entry.get("newValue")),
+                        _dump(entry.get("source")),
+                        _text(entry, "actedAt"),
+                    ),
+                )
+
         counts = {
             "projects": int(connection.execute("SELECT COUNT(*) FROM projects").fetchone()[0]),
             "scenarios": int(connection.execute("SELECT COUNT(*) FROM scenarios").fetchone()[0]),

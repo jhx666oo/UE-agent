@@ -26,13 +26,22 @@ def empty_store_payload() -> dict[str, Any]:
         "dataSources": [],
         "policyDocuments": [],
         "policyFacts": [],
+        "fieldValues": [],
+        "fieldValueHistory": [],
     }
 
 
 def normalize_store_payload(payload: Any) -> dict[str, Any]:
     if not isinstance(payload, dict) or not isinstance(payload.get("projects"), list):
         raise ValueError("Invalid project store payload")
-    for collection in ("calculationSnapshots", "dataSources", "policyDocuments", "policyFacts"):
+    for collection in (
+        "calculationSnapshots",
+        "dataSources",
+        "policyDocuments",
+        "policyFacts",
+        "fieldValues",
+        "fieldValueHistory",
+    ):
         if not isinstance(payload.get(collection, []), list):
             raise ValueError(f"Invalid {collection} store")
         payload.setdefault(collection, [])
@@ -101,6 +110,29 @@ class ProjectRepository(Protocol):
     def create_policy_fact(self, data: Mapping[str, Any]) -> dict[str, Any]: ...
 
     def update_policy_fact(self, fact_id: str, data: Mapping[str, Any]) -> dict[str, Any]: ...
+
+    # ---------- 字段值（PRD 12.2 四元组与采用/覆盖历史） ----------
+    def list_field_values(self, scenario_id: str) -> list[dict[str, Any]]: ...
+
+    def save_field_suggestion(
+        self, scenario_id: str, field_id: str, value: Any, source: Mapping[str, Any]
+    ) -> dict[str, Any]: ...
+
+    def accept_field_suggestion(
+        self, project_id: str, scenario_id: str, field_id: str
+    ) -> dict[str, Any]: ...
+
+    def set_field_value(
+        self, project_id: str, scenario_id: str, field_id: str, value: Any
+    ) -> dict[str, Any] | None: ...
+
+    def mark_field_overridden(
+        self, scenario_id: str, field_id: str, old_value: Any, new_value: Any
+    ) -> dict[str, Any] | None: ...
+
+    def list_field_value_history(
+        self, scenario_id: str, field_id: str | None = None
+    ) -> list[dict[str, Any]]: ...
 
 
 class LocalPolicyFileStore:
@@ -279,6 +311,17 @@ class JsonProjectRepository:
     def get_scenario(self, project_id: str, scenario_id: str) -> dict[str, Any]:
         project = self.get_project(project_id)
         return copy.deepcopy(self._get_scenario_ref(project, scenario_id))
+
+    @staticmethod
+    def _apply_input_change(scenario: dict[str, Any], inputs: dict[str, Any]) -> None:
+        """写入新输入并按是否有历史结果标记 stale/draft（与 update_scenario 同一套规则）。"""
+        had_current_result = scenario.get("resultSnapshotId") is not None or scenario.get("result") is not None
+        scenario["inputs"] = copy.deepcopy(inputs)
+        scenario["inputSnapshot"] = copy.deepcopy(inputs)
+        scenario["result"] = None
+        scenario["resultSnapshotId"] = None
+        scenario["calculatedAt"] = None
+        scenario["status"] = "stale" if had_current_result else "draft"
 
     def update_scenario(self, project_id: str, scenario_id: str, data: Mapping[str, Any]) -> dict[str, Any]:
         payload = self._read()
@@ -503,6 +546,139 @@ class JsonProjectRepository:
         fact["updatedAt"] = utc_now()
         self._write(payload)
         return copy.deepcopy(fact)
+
+    # ---------- 字段值（PRD 12.2 四元组与采用/覆盖历史） ----------
+
+    def _find_scenario_owner(self, payload: dict[str, Any], scenario_id: str) -> tuple[dict[str, Any], dict[str, Any]]:
+        for project in payload["projects"]:
+            for scenario in project.get("scenarios", []):
+                if scenario.get("id") == scenario_id:
+                    return project, scenario
+        raise KeyError(scenario_id)
+
+    def _field_value_ref(self, payload: dict[str, Any], scenario_id: str, field_id: str) -> dict[str, Any] | None:
+        return next(
+            (
+                row
+                for row in payload.get("fieldValues", [])
+                if row.get("scenarioId") == scenario_id and row.get("fieldId") == field_id
+            ),
+            None,
+        )
+
+    def _append_history(
+        self,
+        payload: dict[str, Any],
+        scenario_id: str,
+        field_id: str,
+        action: str,
+        old_value: Any,
+        new_value: Any,
+        source: Any,
+    ) -> None:
+        payload.setdefault("fieldValueHistory", []).append(
+            {
+                "id": new_id("fvh"),
+                "scenarioId": scenario_id,
+                "fieldId": field_id,
+                "action": action,
+                "oldValue": copy.deepcopy(old_value),
+                "newValue": copy.deepcopy(new_value),
+                "source": copy.deepcopy(source),
+                "actedAt": utc_now(),
+            }
+        )
+
+    def list_field_values(self, scenario_id: str) -> list[dict[str, Any]]:
+        rows = [row for row in self._read().get("fieldValues", []) if row.get("scenarioId") == scenario_id]
+        return copy.deepcopy(sorted(rows, key=lambda row: row.get("fieldId", "")))
+
+    def save_field_suggestion(
+        self, scenario_id: str, field_id: str, value: Any, source: Mapping[str, Any]
+    ) -> dict[str, Any]:
+        payload = self._read()
+        self._find_scenario_owner(payload, scenario_id)
+        now = utc_now()
+        row = self._field_value_ref(payload, scenario_id, field_id)
+        old_suggested = row.get("suggestedValue") if row else None
+        if row is None:
+            row = {"scenarioId": scenario_id, "fieldId": field_id, "createdAt": now}
+            payload.setdefault("fieldValues", []).append(row)
+        row.update(
+            {
+                "suggestedValue": copy.deepcopy(value),
+                "suggestedSource": copy.deepcopy(dict(source)),
+                "suggestedAt": now,
+                "valueState": "suggestion_ready",
+                "updatedAt": now,
+            }
+        )
+        self._append_history(payload, scenario_id, field_id, "suggestion_updated", old_suggested, value, row["suggestedSource"])
+        self._write(payload)
+        return copy.deepcopy(row)
+
+    def accept_field_suggestion(self, project_id: str, scenario_id: str, field_id: str) -> dict[str, Any]:
+        payload = self._read()
+        project = self._get_project_ref(payload, project_id)
+        scenario = self._get_scenario_ref(project, scenario_id)
+        row = self._field_value_ref(payload, scenario_id, field_id)
+        if row is None or row.get("suggestedValue") is None:
+            raise ValueError("SUGGESTION_NOT_AVAILABLE")
+        old_value = (scenario.get("inputs") or {}).get(field_id)
+        accepted_value = copy.deepcopy(row["suggestedValue"])
+        inputs = dict(scenario.get("inputs") or {})
+        inputs[field_id] = accepted_value
+        self._apply_input_change(scenario, inputs)
+        now = utc_now()
+        scenario["updatedAt"] = now
+        project["updatedAt"] = now
+        row["valueState"] = "accepted"
+        row["updatedAt"] = now
+        self._append_history(payload, scenario_id, field_id, "accepted", old_value, accepted_value, row.get("suggestedSource"))
+        self._write(payload)
+        return copy.deepcopy(row)
+
+    def set_field_value(self, project_id: str, scenario_id: str, field_id: str, value: Any) -> dict[str, Any] | None:
+        payload = self._read()
+        project = self._get_project_ref(payload, project_id)
+        scenario = self._get_scenario_ref(project, scenario_id)
+        row = self._field_value_ref(payload, scenario_id, field_id)
+        old_value = (scenario.get("inputs") or {}).get(field_id)
+        inputs = dict(scenario.get("inputs") or {})
+        inputs[field_id] = copy.deepcopy(value)
+        self._apply_input_change(scenario, inputs)
+        now = utc_now()
+        scenario["updatedAt"] = now
+        project["updatedAt"] = now
+        if row is not None:
+            row["valueState"] = "overridden"
+            row["updatedAt"] = now
+            self._append_history(payload, scenario_id, field_id, "overridden", old_value, value, row.get("suggestedSource"))
+        else:
+            self._append_history(payload, scenario_id, field_id, "manual_set", old_value, value, None)
+        self._write(payload)
+        return copy.deepcopy(row) if row is not None else None
+
+    def mark_field_overridden(self, scenario_id: str, field_id: str, old_value: Any, new_value: Any) -> dict[str, Any] | None:
+        payload = self._read()
+        self._find_scenario_owner(payload, scenario_id)
+        row = self._field_value_ref(payload, scenario_id, field_id)
+        if row is None:
+            return None
+        now = utc_now()
+        row["valueState"] = "overridden"
+        row["updatedAt"] = now
+        self._append_history(payload, scenario_id, field_id, "overridden", old_value, new_value, row.get("suggestedSource"))
+        self._write(payload)
+        return copy.deepcopy(row)
+
+    def list_field_value_history(self, scenario_id: str, field_id: str | None = None) -> list[dict[str, Any]]:
+        entries = [
+            entry
+            for entry in self._read().get("fieldValueHistory", [])
+            if entry.get("scenarioId") == scenario_id and (field_id is None or entry.get("fieldId") == field_id)
+        ]
+        return copy.deepcopy(sorted(entries, key=lambda entry: entry.get("actedAt", "")))
 
 
 class PostgresProjectRepository(JsonProjectRepository):

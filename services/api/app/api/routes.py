@@ -22,6 +22,7 @@ from ..repository import ProjectRepository
 from .schemas import (
     DataSourceCreate,
     DataSourceUpdate,
+    FieldValueUpdate,
     PolicyParseRequest,
     PolicyReviewRequest,
     ProjectCreate,
@@ -409,9 +410,127 @@ def update_scenario(project_id: str, scenario_id: str, payload: ScenarioUpdate, 
                 return validation
             merged_inputs.update(incoming)
             data["inputs"] = merged_inputs
+            updated = repository.update_scenario(project_id, scenario_id, data)
+            # 爬虫字段被直接手工填写时保留建议值，仅把值状态标记为 overridden（PRD 15.3）
+            catalog = load_parameter_catalog()
+            for field_id, value in incoming.items():
+                entry = catalog.get(field_id)
+                if entry is not None and entry["sourceType"] == "自动爬虫":
+                    repository.mark_field_overridden(
+                        scenario_id, field_id, current["inputs"].get(field_id), value
+                    )
+            return updated
         return repository.update_scenario(project_id, scenario_id, data)
     except KeyError:
         return error_payload("NOT_FOUND", f"Scenario not found: {scenario_id}")
+
+
+def _field_value_view(
+    entry: dict[str, Any],
+    current_value: Any,
+    row: Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    source_type = entry["sourceType"]
+    if source_type == "公式自动":
+        state = "formula"
+    elif row is not None:
+        state = row.get("valueState")
+    elif source_type == "自动爬虫":
+        state = "empty"
+    else:
+        state = "manual"
+    return {
+        "fieldId": entry["id"],
+        "name": entry["name"],
+        "unit": entry["unit"],
+        "sourceType": source_type,
+        "block": entry["block"],
+        "blockOrder": entry["blockOrder"],
+        "readOnly": source_type == "公式自动",
+        "currentValue": current_value,
+        "suggestedValue": row.get("suggestedValue") if row else None,
+        "suggestedSource": row.get("suggestedSource") if row else None,
+        "suggestedAt": row.get("suggestedAt") if row else None,
+        "valueState": state,
+    }
+
+
+def _scenario_value_rows(repository: ProjectRepository, scenario_id: str) -> dict[str, dict[str, Any]]:
+    return {row["fieldId"]: row for row in repository.list_field_values(scenario_id)}
+
+
+@router.get("/projects/{project_id}/scenarios/{scenario_id}/values", response_model=None)
+def list_scenario_values(
+    project_id: str, scenario_id: str, request: Request
+) -> dict[str, Any] | JSONResponse:
+    repository = repository_from_request(request)
+    try:
+        scenario = repository.get_scenario(project_id, scenario_id)
+    except KeyError:
+        return error_payload("NOT_FOUND", f"Scenario not found: {scenario_id}")
+    rows = _scenario_value_rows(repository, scenario_id)
+    inputs = scenario.get("inputs") or {}
+    catalog = load_parameter_catalog()
+    fields = [
+        _field_value_view(entry, inputs.get(entry["id"]), rows.get(entry["id"]))
+        for entry in catalog.values()
+    ]
+    return {"scenarioId": scenario_id, "fields": fields}
+
+
+@router.patch("/projects/{project_id}/scenarios/{scenario_id}/values/{field_id}", response_model=None)
+def patch_scenario_value(
+    project_id: str, scenario_id: str, field_id: str, payload: FieldValueUpdate, request: Request
+) -> dict[str, Any] | JSONResponse:
+    repository = repository_from_request(request)
+    validation = validate_scenario_inputs({field_id: payload.value})
+    if validation is not None:
+        return validation
+    catalog = load_parameter_catalog()
+    entry = catalog[field_id]
+    try:
+        repository.set_field_value(project_id, scenario_id, field_id, payload.value)
+        scenario = repository.get_scenario(project_id, scenario_id)
+    except KeyError:
+        return error_payload("NOT_FOUND", f"Scenario not found: {scenario_id}")
+    rows = _scenario_value_rows(repository, scenario_id)
+    return _field_value_view(entry, (scenario.get("inputs") or {}).get(field_id), rows.get(field_id))
+
+
+@router.post(
+    "/projects/{project_id}/scenarios/{scenario_id}/values/{field_id}/accept-suggestion",
+    response_model=None,
+)
+def accept_field_suggestion(
+    project_id: str, scenario_id: str, field_id: str, request: Request
+) -> dict[str, Any] | JSONResponse:
+    repository = repository_from_request(request)
+    catalog = load_parameter_catalog()
+    entry = catalog.get(field_id)
+    if entry is None:
+        return error_payload("UNKNOWN_FIELD", f"未知参数编号：{field_id}")
+    if entry["sourceType"] == "公式自动":
+        return error_payload(
+            "FORMULA_FIELD_READ_ONLY",
+            f"{field_id} {entry['name']} 是公式自动字段，不能采用建议值",
+        )
+    try:
+        repository.accept_field_suggestion(project_id, scenario_id, field_id)
+    except KeyError:
+        return error_payload("NOT_FOUND", f"Scenario not found: {scenario_id}")
+    except ValueError:
+        return JSONResponse(
+            status_code=409,
+            content={
+                "error": {
+                    "code": "SUGGESTION_NOT_AVAILABLE",
+                    "message": f"{field_id} 当前没有可采用的建议值",
+                }
+            },
+        )
+    scenario = repository.get_scenario(project_id, scenario_id)
+    rows = _scenario_value_rows(repository, scenario_id)
+    return _field_value_view(entry, (scenario.get("inputs") or {}).get(field_id), rows.get(field_id))
 
 
 @router.post("/projects/{project_id}/scenarios/{scenario_id}/confirm", response_model=None)

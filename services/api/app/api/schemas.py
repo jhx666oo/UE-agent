@@ -30,6 +30,12 @@ class ScenarioUpdate(BaseModel):
     inputs: dict[str, Any] | None = None
 
 
+class FieldValueUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    value: Any = None
+
+
 class DataSourceCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
