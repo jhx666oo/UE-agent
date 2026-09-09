@@ -224,6 +224,39 @@ class SqliteRepositoryBehaviourTests(unittest.TestCase):
 
         self.assertEqual(ordered, [second["id"], first["id"]])
 
+    def test_data_source_crawl_status_columns_use_snake_case_columns(self) -> None:
+        """003 迁移新增列经 camelCase API 字段名写入。
+
+        回归：曾把 camelCase 字段名直接拼进 SQL 列名，抓取回写时报
+        `no such column: lastFetchedAt`。JSON 仓储是纯 dict 不会触发，只有 SQLite 路径会。
+        """
+        source = self.repository.create_data_source(
+            {"cityId": "changsha", "name": "抓取状态来源", "kind": "web", "url": "https://example.com"}
+        )
+        updated = self.repository.update_data_source(
+            source["id"],
+            {
+                "lastFetchedAt": "2026-09-09T00:00:00+00:00",
+                "lastHttpStatus": 200,
+                "lastChangeStatus": "new_version",
+                "timeoutSeconds": 30,
+                "maxBytes": 5 * 1024 * 1024,
+                "note": "端到端验收",
+            },
+        )
+        self.assertEqual(updated["lastFetchedAt"], "2026-09-09T00:00:00+00:00")
+        self.assertEqual(updated["lastHttpStatus"], 200)
+        self.assertEqual(updated["lastChangeStatus"], "new_version")
+        self.assertEqual(updated["timeoutSeconds"], 30)
+        self.assertEqual(updated["maxBytes"], 5 * 1024 * 1024)
+        self.assertEqual(updated["note"], "端到端验收")
+
+        reopened = SqliteProjectRepository(self.path).list_data_sources("changsha")
+        persisted = next(item for item in reopened if item["id"] == source["id"])
+        self.assertEqual(persisted["lastHttpStatus"], 200)
+        self.assertEqual(persisted["lastChangeStatus"], "new_version")
+        self.assertEqual(persisted["timeoutSeconds"], 30)
+
     def test_data_source_and_policy_records_round_trip(self) -> None:
         source = self.repository.create_data_source(
             {"cityId": "changsha", "name": "长沙医保局", "kind": "web", "url": "https://example.gov.cn"}

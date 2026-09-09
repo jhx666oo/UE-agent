@@ -31,6 +31,9 @@ SQLITE_SOURCE_KEYS = {
     "last_change_status": "lastChangeStatus",
 }
 
+# API 字段名 -> data_sources 列名（写入时使用；与 SQLITE_SOURCE_KEYS 互为反向）
+SOURCE_COLUMN_BY_KEY = {api_key: column for column, api_key in SQLITE_SOURCE_KEYS.items()}
+
 
 def default_data_dir() -> Path:
     configured = os.getenv("UE_AGENT_DATA_DIR")
@@ -558,8 +561,10 @@ class SqliteProjectRepository:
                 "note",
             ):
                 if key in data and data[key] is not None:
+                    # 数据库列是 snake_case，API 字段是 camelCase，拼列名前必须映射
+                    column = SOURCE_COLUMN_BY_KEY.get(key, key)
                     connection.execute(
-                        f"UPDATE data_sources SET {key} = ? WHERE id = ?", (data[key], source_id)
+                        f"UPDATE data_sources SET {column} = ? WHERE id = ?", (data[key], source_id)
                     )
             connection.execute(
                 "UPDATE data_sources SET updated_at = ? WHERE id = ?", (utc_now(), source_id)
