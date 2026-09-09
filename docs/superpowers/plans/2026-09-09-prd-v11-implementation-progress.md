@@ -26,11 +26,26 @@
 - 来源配置增强：timeoutSeconds/maxBytes/note/lastFetchedAt/lastHttpStatus/lastChangeStatus（PUT 可改）
 - 手动上传路由已移除：`POST /policies/documents/upload` 返回 404 `UPLOAD_NOT_AVAILABLE`；`app/(workspace)/policies/[cityId]` 上传面板组件已删
 
-### M4 前端（本次提交，进度见下）
+### M4 前端（a364b22，已推送）
 - M4a 导航四项化完成：`lib/navigation.ts` 总览/城市测算/政策资料/城市对比（`/?scope=compare`），删「参数设置」项；`/settings` 页面仍在但不在主导航；全站术语统一（城市测算/新增城市/打开城市）
 - M4b 城市测算页完成：`FieldValueControl` 四类数据源交互（内部填写=普通输入、自动爬虫=灰色建议值+采用按钮+查看来源、公式自动=浅绿只读框、其他来源=可留空），枚举渲染下拉；`city-project-workbench` 改为字段值驱动 + 按八分组渲染 + 乐观更新 PATCH + 接受建议值后标待重算
 - M4c 政策页完成：`policy-city-detail` 重构为官网来源列表（新增/启停/立即抓取）+ 抓取历史（含建议值摘要/失败原因/查看原文）+ 关联城市；`lib/policies.ts` 全套抓取 API
 - M4d 验证通过：后端 101 项、前端 27 项、typecheck、eslint 全绿
+- M4e README 状态校正（M4 后补）：仓库状态中"前端代码"由"正按需求文档改造"改为"已按需求文档改造"，"政策资料"改为「官网来源配置 + 一键抓取 + 灰色建议值」描述
+
+## 运行中的进程（接手时先看）
+
+> 上一位 agent 留了两个进程在跑：**API :8000**、**前端 :3000**，日志落在 `/tmp/prd_build/`。
+>
+> ⚠️ **API 进程是 M4 之前起的旧代码**，其中"查看公式 options"这个后端小改动没有生效。
+> 接手第一步请先杀掉 API 进程，再重启：
+>
+> ```bash
+> lsof -ti:8000 | xargs kill -9        # 杀旧 API
+> pnpm api:dev                         # 在仓库根目录重启
+> ```
+>
+> 前端 :3000 进程代码已就绪，必要时同样 `lsof -ti:3000 | xargs kill -9 && pnpm dev`。
 
 ## 待办（按优先级）
 
