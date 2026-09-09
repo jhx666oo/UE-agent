@@ -28,6 +28,7 @@ def empty_store_payload() -> dict[str, Any]:
         "policyFacts": [],
         "fieldValues": [],
         "fieldValueHistory": [],
+        "crawlArtifacts": [],
     }
 
 
@@ -41,6 +42,7 @@ def normalize_store_payload(payload: Any) -> dict[str, Any]:
         "policyFacts",
         "fieldValues",
         "fieldValueHistory",
+        "crawlArtifacts",
     ):
         if not isinstance(payload.get(collection, []), list):
             raise ValueError(f"Invalid {collection} store")
@@ -133,6 +135,15 @@ class ProjectRepository(Protocol):
     def list_field_value_history(
         self, scenario_id: str, field_id: str | None = None
     ) -> list[dict[str, Any]]: ...
+
+    # ---------- 抓取记录（PRD 11.8） ----------
+    def list_crawl_artifacts(
+        self, *, source_id: str | None = None, city_id: str | None = None
+    ) -> list[dict[str, Any]]: ...
+
+    def get_crawl_artifact(self, artifact_id: str) -> dict[str, Any]: ...
+
+    def create_crawl_artifact(self, data: Mapping[str, Any]) -> dict[str, Any]: ...
 
 
 class LocalPolicyFileStore:
@@ -419,6 +430,9 @@ class JsonProjectRepository:
             "createdAt": now,
             "updatedAt": now,
         }
+        for key in ("timeoutSeconds", "maxBytes", "note"):
+            if data.get(key) is not None:
+                source[key] = data[key]
         payload = self._read()
         payload.setdefault("dataSources", []).append(source)
         self._write(payload)
@@ -429,7 +443,18 @@ class JsonProjectRepository:
         source = next((item for item in payload.get("dataSources", []) if item.get("id") == source_id), None)
         if source is None:
             raise KeyError(source_id)
-        for key in ("name", "kind", "url", "status"):
+        for key in (
+            "name",
+            "kind",
+            "url",
+            "status",
+            "lastFetchedAt",
+            "lastHttpStatus",
+            "lastChangeStatus",
+            "timeoutSeconds",
+            "maxBytes",
+            "note",
+        ):
             if key in data and data[key] is not None:
                 source[key] = data[key]
         source["updatedAt"] = utc_now()
@@ -679,6 +704,35 @@ class JsonProjectRepository:
             if entry.get("scenarioId") == scenario_id and (field_id is None or entry.get("fieldId") == field_id)
         ]
         return copy.deepcopy(sorted(entries, key=lambda entry: entry.get("actedAt", "")))
+
+    # ---------- 抓取记录（PRD 11.8） ----------
+
+    def list_crawl_artifacts(
+        self, *, source_id: str | None = None, city_id: str | None = None
+    ) -> list[dict[str, Any]]:
+        artifacts = self._read().get("crawlArtifacts", [])
+        selected = [
+            artifact
+            for artifact in artifacts
+            if (source_id is None or artifact.get("sourceId") == source_id)
+            and (city_id is None or artifact.get("cityId") == city_id)
+        ]
+        return copy.deepcopy(selected)
+
+    def get_crawl_artifact(self, artifact_id: str) -> dict[str, Any]:
+        for artifact in self._read().get("crawlArtifacts", []):
+            if artifact.get("artifactId") == artifact_id:
+                return copy.deepcopy(artifact)
+        raise KeyError(artifact_id)
+
+    def create_crawl_artifact(self, data: Mapping[str, Any]) -> dict[str, Any]:
+        artifact = copy.deepcopy(dict(data))
+        artifact["artifactId"] = new_id("artifact")
+        artifact["fetchedAt"] = artifact.get("fetchedAt") or utc_now()
+        payload = self._read()
+        payload.setdefault("crawlArtifacts", []).append(artifact)
+        self._write(payload)
+        return copy.deepcopy(artifact)
 
 
 class PostgresProjectRepository(JsonProjectRepository):

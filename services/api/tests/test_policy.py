@@ -1,9 +1,13 @@
 from __future__ import annotations
 
-import hashlib
+import http.server
 import tempfile
+import threading
 import unittest
+import warnings
 from pathlib import Path
+
+warnings.filterwarnings("ignore", message="Using `httpx` with `starlette.testclient` is deprecated")
 
 from fastapi.testclient import TestClient
 
@@ -11,127 +15,100 @@ from app.main import create_app
 from app.repository import JsonProjectRepository
 
 
+class _Handler(http.server.BaseHTTPRequestHandler):
+    def log_message(self, format, *args):  # noqa: A002
+        pass
+
+    def do_GET(self):  # noqa: N802
+        if self.path == "/policy":
+            body = (
+                "<html><head><title>长期护理保险政策</title></head>"
+                "<body>单小时服务单价为 60 元，基金支付比例 80%。</body></html>"
+            ).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+        else:
+            self.send_response(404)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+
+
 class PolicyApiTests(unittest.TestCase):
+    """政策域按 PRD v1.1 运行：官网来源 + 一键抓取 + 建议值；Demo 不提供手动上传。"""
+
     def setUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory()
-        self.store_path = Path(self.temp_dir.name) / "data" / "projects.json"
-        self.repository = JsonProjectRepository(self.store_path)
-        self.client = TestClient(create_app(self.repository))
+        self.repository = JsonProjectRepository(Path(self.temp_dir.name) / "projects.json")
+        app = create_app(self.repository)
+        app.state.crawl_allow_private = True
+        self.client = TestClient(app)
+        self.server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _Handler)
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+        self.base = f"http://127.0.0.1:{self.server.server_address[1]}"
 
     def tearDown(self) -> None:
+        self.server.shutdown()
+        self.server.server_close()
         self.temp_dir.cleanup()
 
-    def upload(self, filename: str = "policy.pdf", content: bytes = b"local policy") -> dict:
+    def _make_source(self, url: str) -> dict:
         response = self.client.post(
-            "/api/policies/documents/upload",
-            data={"cityId": "city-a", "source": "local-review"},
-            files={"file": (filename, content, "application/pdf")},
+            "/api/policies/sources",
+            json={"cityId": "city-a", "name": "官方来源", "kind": "government", "url": url},
         )
         self.assertEqual(response.status_code, 201, response.text)
         return response.json()
 
-    def test_policy_state_machine_keeps_candidates_out_of_summary_until_approved(self) -> None:
-        document = self.upload()
-        self.assertEqual(document["status"], "uploaded")
-        self.assertEqual(document["sha256"], hashlib.sha256(b"local policy").hexdigest())
-        self.assertTrue((self.store_path.parent / document["storedPath"]).exists())
-        self.assertNotEqual(Path(document["storedPath"]).name, "policy.pdf")
-        original = self.client.get(f"/api/policies/documents/{document['id']}/content")
-        self.assertEqual(original.status_code, 200, original.text)
-        self.assertEqual(original.content, b"local policy")
-
-        parsed = self.client.post(
-            f"/api/policies/documents/{document['id']}/parse",
-            json={
-                "candidates": [
-                    {
-                        "fieldId": "fundPaymentRatio",
-                        "value": 0.8,
-                        "unit": "比例",
-                        "confidence": 0.92,
-                        "source": "第3条",
-                    }
-                ]
-            },
+    def test_manual_upload_endpoint_is_removed_in_demo(self) -> None:
+        response = self.client.post(
+            "/api/policies/documents/upload",
+            data={"cityId": "city-a", "source": "local-review"},
+            files={"file": ("policy.pdf", b"local policy", "application/pdf")},
         )
-        self.assertEqual(parsed.status_code, 200, parsed.text)
-        self.assertEqual(parsed.json()["status"], "review_pending")
-        self.assertEqual(parsed.json()["pendingFactCount"], 1)
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.json()["error"]["code"], "UPLOAD_NOT_AVAILABLE")
 
-        pending_summary = self.client.get("/api/dashboard/policy-summary?cityIds=city-a")
-        self.assertEqual(pending_summary.status_code, 200, pending_summary.text)
-        self.assertEqual(pending_summary.json()["cities"][0]["approvedFactCount"], 0)
-        self.assertEqual(pending_summary.json()["cities"][0]["pendingReviewCount"], 1)
-        self.assertEqual(pending_summary.json()["cities"][0]["approvedFacts"], [])
+    def test_crawl_suggestions_stay_out_of_inputs_until_accepted(self) -> None:
+        source = self._make_source(f"{self.base}/policy")
+        project = self.repository.create_project({"name": "City A", "city": "城市A", "cityId": "city-a"})
+        scenario = self.repository.create_scenario(project["id"], {"name": "基准", "inputs": {"P1": 50}})
 
-        rejected = self.client.post(
-            f"/api/policies/documents/{document['id']}/facts/{parsed.json()['factIds'][0]}/review",
-            json={"decision": "reject", "reviewer": "reviewer-a"},
-        )
-        self.assertEqual(rejected.status_code, 200, rejected.text)
-        self.assertEqual(rejected.json()["status"], "rejected")
-
-        rejected_summary = self.client.get("/api/dashboard/policy-summary?cityIds=city-a")
-        self.assertEqual(rejected_summary.json()["cities"][0]["approvedFacts"], [])
-
-        approved_document = self.upload("policy-v2.docx", b"approved policy")
-        approved_parse = self.client.post(
-            f"/api/policies/documents/{approved_document['id']}/parse",
-            json={
-                "candidates": [
-                    {
-                        "fieldId": "fundPaymentRatio",
-                        "value": 0.85,
-                        "unit": "比例",
-                        "confidence": 0.96,
-                        "source": "第4条",
-                    }
-                ]
-            },
-        )
-        fact_id = approved_parse.json()["factIds"][0]
-        approved = self.client.post(
-            f"/api/policies/documents/{approved_document['id']}/facts/{fact_id}/review",
-            json={
-                "decision": "approve",
-                "reviewer": "reviewer-a",
-                "source": "民政局公告",
-                "effectiveDate": "2026-01-01",
-            },
-        )
-        self.assertEqual(approved.status_code, 200, approved.text)
-        self.assertEqual(approved.json()["status"], "approved")
-
-        approved_summary = self.client.get("/api/dashboard/policy-summary?cityIds=city-a")
-        city_summary = approved_summary.json()["cities"][0]
-        self.assertEqual(city_summary["approvedFactCount"], 1)
-        self.assertEqual(city_summary["approvedFacts"][0]["value"], 0.85)
-        self.assertEqual(city_summary["pendingReviewCount"], 0)
-        dashboard = self.client.get("/api/dashboard/overview")
-        self.assertEqual(dashboard.status_code, 200, dashboard.text)
-        self.assertEqual(dashboard.json()["policySummary"]["cities"][0]["approvedFactCount"], 1)
-
-    def test_policy_overview_and_sources_are_local_and_explicit(self) -> None:
-        project = self.repository.create_project({"name": "City A", "city": "城市A"})
-        scenario = self.repository.create_scenario(project["id"], {"name": "基准", "inputs": {"fundPaymentRatio": 0.5}})
-        document = self.upload("policy.xlsx", b"xlsx placeholder")
-
-        source = self.client.post(
-            "/api/policies/sources",
-            json={"cityId": "city-a", "name": "官方来源", "kind": "web", "url": "https://example.test/policy"},
-        )
-        self.assertEqual(source.status_code, 201, source.text)
-        self.assertEqual(self.client.get("/api/policies/sources?cityId=city-a").json()[0]["status"], "active")
+        artifact = self.client.post(f"/api/policies/sources/{source['id']}/crawl")
+        self.assertEqual(artifact.status_code, 200, artifact.text)
 
         overview = self.client.get("/api/policies/overview")
-        self.assertEqual(overview.status_code, 200, overview.text)
-        self.assertEqual(overview.json()["cities"][0]["pendingReviewCount"], 0)
-        detail = self.client.get("/api/policies/cities/city-a")
-        self.assertEqual(detail.status_code, 200, detail.text)
-        self.assertEqual(detail.json()["documents"][0]["id"], document["id"])
-
+        self.assertEqual(overview.status_code, 200)
+        # 建议值不影响城市输入（PRD 15.2：suggestion_ready 计入建议值数量）
         unchanged = self.repository.get_scenario(project["id"], scenario["id"])
-        self.assertEqual(unchanged["inputs"]["fundPaymentRatio"], 0.5)
+        self.assertEqual(unchanged["inputs"]["P1"], 50)
+        values = {row["fieldId"]: row for row in self.repository.list_field_values(scenario["id"])}
+        self.assertEqual(values["P1"]["suggestedValue"], 60)
+        self.assertEqual(values["P1"]["valueState"], "suggestion_ready")
+
+    def test_city_detail_lists_sources_and_artifacts(self) -> None:
+        source = self._make_source(f"{self.base}/policy")
+        self.client.post(f"/api/policies/sources/{source['id']}/crawl")
+
+        detail = self.client.get("/api/policies/cities/city-a")
+
+        self.assertEqual(detail.status_code, 200)
+        self.assertEqual(detail.json()["dataSources"][0]["id"], source["id"])
+        self.assertEqual(detail.json()["dataSources"][0]["lastHttpStatus"], 200)
+
+    def test_source_url_must_be_public_http(self) -> None:
+        source = self._make_source("http://192.168.0.10/policy")
+        response = self.client.post(f"/api/policies/sources/{source['id']}/crawl")
+
+        self.assertEqual(response.status_code, 502)
+        self.assertEqual(response.json()["error"]["code"], "POLICY_SOURCE_FETCH_FAILED")
+        # 失败记录保留，来源标记 error，不删除任何已有数据
+        artifacts = self.repository.list_crawl_artifacts(source_id=source["id"])
+        self.assertEqual(len(artifacts), 1)
+        self.assertEqual(artifacts[0]["status"], "failed")
+        self.assertEqual(self.client.get("/api/policies/sources").json()[0]["status"], "error")
 
 
 if __name__ == "__main__":

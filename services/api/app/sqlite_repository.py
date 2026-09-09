@@ -21,6 +21,16 @@ DATA_ROOT = Path(__file__).resolve().parents[1] / "data"
 MIGRATIONS_DIR = Path(__file__).resolve().parents[1] / "migrations" / "sqlite"
 DATABASE_NAME = "ue-agent.sqlite3"
 
+# data_sources 新增列（003 迁移）-> API 字段名映射
+SQLITE_SOURCE_KEYS = {
+    "timeout_seconds": "timeoutSeconds",
+    "max_bytes": "maxBytes",
+    "note": "note",
+    "last_fetched_at": "lastFetchedAt",
+    "last_http_status": "lastHttpStatus",
+    "last_change_status": "lastChangeStatus",
+}
+
 
 def default_data_dir() -> Path:
     configured = os.getenv("UE_AGENT_DATA_DIR")
@@ -153,7 +163,7 @@ class SqliteProjectRepository:
 
     @staticmethod
     def _data_source_dict(row: sqlite3.Row) -> dict[str, Any]:
-        return {
+        source = {
             "id": row["id"],
             "cityId": row["city_id"],
             "name": row["name"],
@@ -163,6 +173,15 @@ class SqliteProjectRepository:
             "createdAt": row["created_at"],
             "updatedAt": row["updated_at"],
         }
+        # 抓取配置与最近抓取状态（003 迁移新增列；旧库可能尚未迁移）
+        for key in ("timeout_seconds", "max_bytes", "note", "last_fetched_at", "last_http_status", "last_change_status"):
+            try:
+                value = row[key]
+            except (IndexError, KeyError):
+                value = None
+            if value is not None:
+                source[SQLITE_SOURCE_KEYS[key]] = value
+        return source
 
     @staticmethod
     def _document_dict(row: sqlite3.Row) -> dict[str, Any]:
@@ -498,10 +517,14 @@ class SqliteProjectRepository:
             "createdAt": now,
             "updatedAt": now,
         }
+        for key in ("timeoutSeconds", "maxBytes", "note"):
+            if data.get(key) is not None:
+                source[key] = data[key]
         with self._db() as connection:
             connection.execute(
-                "INSERT INTO data_sources (id, city_id, name, kind, url, status, created_at, updated_at)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO data_sources (id, city_id, name, kind, url, status, timeout_seconds,"
+                " max_bytes, note, created_at, updated_at)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     source["id"],
                     source["cityId"],
@@ -509,6 +532,9 @@ class SqliteProjectRepository:
                     source["kind"],
                     source["url"],
                     source["status"],
+                    source.get("timeoutSeconds"),
+                    source.get("maxBytes"),
+                    source.get("note"),
                     source["createdAt"],
                     source["updatedAt"],
                 ),
@@ -519,10 +545,21 @@ class SqliteProjectRepository:
         with self._db() as connection:
             if connection.execute("SELECT 1 FROM data_sources WHERE id = ?", (source_id,)).fetchone() is None:
                 raise KeyError(source_id)
-            for column, key in (("name", "name"), ("kind", "kind"), ("url", "url"), ("status", "status")):
+            for key in (
+                "name",
+                "kind",
+                "url",
+                "status",
+                "lastFetchedAt",
+                "lastHttpStatus",
+                "lastChangeStatus",
+                "timeoutSeconds",
+                "maxBytes",
+                "note",
+            ):
                 if key in data and data[key] is not None:
                     connection.execute(
-                        f"UPDATE data_sources SET {column} = ? WHERE id = ?", (data[key], source_id)
+                        f"UPDATE data_sources SET {key} = ? WHERE id = ?", (data[key], source_id)
                     )
             connection.execute(
                 "UPDATE data_sources SET updated_at = ? WHERE id = ?", (utc_now(), source_id)
@@ -918,3 +955,83 @@ class SqliteProjectRepository:
                 params,
             ).fetchall()
         return [self._history_dict(row) for row in rows]
+
+    # ---------- 抓取记录（PRD 11.8） ----------
+
+    @staticmethod
+    def _artifact_dict(row: sqlite3.Row) -> dict[str, Any]:
+        return {
+            "artifactId": row["id"],
+            "sourceId": row["source_id"],
+            "cityId": row["city_id"],
+            "requestedUrl": row["requested_url"],
+            "finalUrl": row["final_url"],
+            "fetchedAt": row["fetched_at"],
+            "httpStatus": row["http_status"],
+            "contentType": row["content_type"],
+            "contentLength": row["content_length"],
+            "sha256": row["sha256"],
+            "storedPath": row["stored_path"],
+            "title": row["title"],
+            "changeStatus": row["change_status"],
+            "status": row["status"],
+            "errorMessage": row["error_message"],
+        }
+
+    def list_crawl_artifacts(
+        self, *, source_id: str | None = None, city_id: str | None = None
+    ) -> list[dict[str, Any]]:
+        clauses: list[str] = []
+        params: list[Any] = []
+        if source_id is not None:
+            clauses.append("source_id = ?")
+            params.append(source_id)
+        if city_id is not None:
+            clauses.append("city_id = ?")
+            params.append(city_id)
+        where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
+        with self._db() as connection:
+            rows = connection.execute(
+                f"SELECT * FROM crawl_artifacts{where} ORDER BY fetched_at ASC, id ASC", params
+            ).fetchall()
+        return [self._artifact_dict(row) for row in rows]
+
+    def get_crawl_artifact(self, artifact_id: str) -> dict[str, Any]:
+        with self._db() as connection:
+            row = connection.execute(
+                "SELECT * FROM crawl_artifacts WHERE id = ?", (artifact_id,)
+            ).fetchone()
+        if row is None:
+            raise KeyError(artifact_id)
+        return self._artifact_dict(row)
+
+    def create_crawl_artifact(self, data: Mapping[str, Any]) -> dict[str, Any]:
+        artifact = dict(data)
+        artifact_id = artifact.get("artifactId") or new_id("artifact")
+        artifact["artifactId"] = artifact_id
+        artifact.setdefault("fetchedAt", utc_now())
+        with self._db() as connection:
+            connection.execute(
+                "INSERT INTO crawl_artifacts (id, source_id, city_id, requested_url, final_url, fetched_at,"
+                " http_status, content_type, content_length, sha256, stored_path, title, change_status,"
+                " status, error_message, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    artifact_id,
+                    artifact["sourceId"],
+                    artifact["cityId"],
+                    artifact["requestedUrl"],
+                    artifact.get("finalUrl"),
+                    artifact["fetchedAt"],
+                    artifact.get("httpStatus"),
+                    artifact.get("contentType"),
+                    artifact.get("contentLength"),
+                    artifact.get("sha256"),
+                    artifact.get("storedPath"),
+                    artifact.get("title"),
+                    artifact.get("changeStatus"),
+                    artifact.get("status", "success"),
+                    artifact.get("errorMessage"),
+                    utc_now(),
+                ),
+            )
+        return {k: v for k, v in artifact.items() if k != "rawContent"}

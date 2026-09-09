@@ -43,6 +43,10 @@ class DataSourceCreate(BaseModel):
     name: str = Field(min_length=1, max_length=120)
     kind: str = Field(default="web", min_length=1, max_length=30)
     url: str | None = Field(default=None, max_length=500)
+    status: str = Field(default="active", min_length=1, max_length=20)
+    timeoutSeconds: int | None = Field(default=None, ge=1, le=60)
+    maxBytes: int | None = Field(default=None, ge=1, le=20 * 1024 * 1024)
+    note: str | None = Field(default=None, max_length=500)
 
 
 class DataSourceUpdate(BaseModel):
@@ -52,6 +56,9 @@ class DataSourceUpdate(BaseModel):
     kind: str | None = Field(default=None, min_length=1, max_length=30)
     url: str | None = Field(default=None, max_length=500)
     status: Literal["active", "paused", "error"] | None = None
+    timeoutSeconds: int | None = Field(default=None, ge=1, le=60)
+    maxBytes: int | None = Field(default=None, ge=1, le=20 * 1024 * 1024)
+    note: str | None = Field(default=None, max_length=500)
 
 
 class PolicyCandidateInput(BaseModel):
