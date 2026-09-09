@@ -1,9 +1,14 @@
 from __future__ import annotations
 
+import csv
+import io
+import json
 from dataclasses import fields, is_dataclass
+from datetime import datetime, timezone
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 from fastapi import APIRouter, Request, Response
 from fastapi.responses import JSONResponse
@@ -301,6 +306,167 @@ async def upload_policy_document() -> JSONResponse:
     return JSONResponse(
         status_code=404,
         content={"error": {"code": "UPLOAD_NOT_AVAILABLE", "message": "Demo 阶段不提供政策文件手动上传，请配置官网来源并一键抓取"}},
+    )
+
+
+# ---------- 政策导出（PRD 16.7 / 11.12 / 22.3） ----------
+
+_EXPORT_FIELD_HEADER = [
+    "城市", "项目", "场景", "参数编号", "参数名称", "单位", "数据源类型",
+    "当前实际值", "建议值", "值状态", "建议来源", "建议采集时间",
+]
+_EXPORT_SOURCE_HEADER = [
+    "城市", "来源ID", "来源名称", "类型", "链接", "状态",
+    "最近抓取时间", "最近HTTP状态", "最近变更", "备注",
+]
+_EXPORT_ARTIFACT_HEADER = [
+    "抓取记录ID", "来源ID", "城市", "请求URL", "最终URL", "抓取时间", "HTTP状态",
+    "内容类型", "字节数", "SHA256", "标题", "变更状态", "状态", "错误信息",
+]
+
+
+def _csv_response(filename: str, header: list[str], rows: list[list[Any]]) -> Response:
+    """UTF-8 带 BOM 的 CSV，保证 Excel 正确显示中文（PRD 20.4）。"""
+    buffer = io.StringIO()
+    writer = csv.writer(buffer)
+    writer.writerow(header)
+    for row in rows:
+        writer.writerow(["" if value is None else value for value in row])
+    return Response(
+        content=("\ufeff" + buffer.getvalue()).encode("utf-8"),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(filename)}"},
+    )
+
+
+def _source_name_of(row: Mapping[str, Any]) -> Any:
+    source = row.get("suggestedSource")
+    return source.get("sourceName") if isinstance(source, Mapping) else None
+
+
+def _collect_export_data(
+    repository: ProjectRepository, city_id: str | None, source_id: str | None
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
+    """汇总来源、抓取记录与政策字段值；建议值、实际值与覆盖值分列保留。"""
+    sources = repository.list_data_sources(city_id)
+    if source_id:
+        sources = [item for item in sources if item["id"] == source_id]
+    artifacts: list[dict[str, Any]] = []
+    for source in sources:
+        artifacts.extend(repository.list_crawl_artifacts(source_id=source["id"]))
+    if source_id and not artifacts:
+        artifacts = repository.list_crawl_artifacts(source_id=source_id)
+
+    projects = repository.list_projects()
+    if city_id:
+        projects = [p for p in projects if p.get("city") == city_id or p.get("cityId") == city_id]
+    catalog = load_parameter_catalog()
+    field_rows: list[dict[str, Any]] = []
+    for project in projects:
+        for scenario in project.get("scenarios", []):
+            try:
+                detail = repository.get_scenario(project["id"], scenario["id"])
+            except KeyError:
+                continue
+            inputs = detail.get("inputs") or {}
+            rows = {row["fieldId"]: row for row in repository.list_field_values(scenario["id"])}
+            for entry in catalog.values():
+                view = _field_value_view(entry, inputs.get(entry["id"]), rows.get(entry["id"]))
+                if view["suggestedValue"] is None and view["valueState"] not in ("accepted", "overridden"):
+                    continue  # 只导出与政策建议值相关的字段，避免 75 行全量噪音
+                field_rows.append(
+                    {
+                        "city": project.get("city"),
+                        "projectName": project.get("name"),
+                        "scenarioName": scenario.get("name"),
+                        **view,
+                    }
+                )
+    return sources, artifacts, field_rows
+
+
+@router.get("/policies/export", response_model=None)
+def export_policies(
+    request: Request,
+    format: str = "csv",
+    scope: str = "global",
+    cityId: str | None = None,
+    sourceId: str | None = None,
+    dataset: str = "fields",
+) -> Response | JSONResponse:
+    """PRD 16.7：导出政策来源、抓取记录与结构化政策字段。
+
+    建议值、实际值和手工覆盖值分列导出，并附带来源、采集时间和状态（PRD 11.12）。
+    """
+    if format not in ("csv", "json"):
+        return error_payload("UNSUPPORTED_EXPORT_FORMAT", f"不支持的导出格式：{format}，可选 csv 或 json")
+    if dataset not in ("fields", "sources", "artifacts"):
+        return error_payload(
+            "UNSUPPORTED_EXPORT_DATASET", f"不支持的导出内容：{dataset}，可选 fields、sources 或 artifacts"
+        )
+
+    repository = repository_from_request(request)
+    sources, artifacts, field_rows = _collect_export_data(repository, cityId, sourceId)
+    label = cityId or sourceId or scope
+
+    if format == "json":
+        body = json.dumps(
+            {
+                "exportedAt": datetime.now(timezone.utc).isoformat(),
+                "scope": scope,
+                "cityId": cityId,
+                "sourceId": sourceId,
+                "sources": sources,
+                "artifacts": artifacts,
+                "fieldValues": field_rows,
+            },
+            ensure_ascii=False,
+            indent=2,
+        ).encode("utf-8")
+        return Response(
+            content=body,
+            media_type="application/json; charset=utf-8",
+            headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(f'政策导出-{label}.json')}"},
+        )
+
+    if dataset == "sources":
+        return _csv_response(
+            f"政策来源-{label}.csv",
+            _EXPORT_SOURCE_HEADER,
+            [
+                [
+                    s.get("cityId"), s.get("id"), s.get("name"), s.get("kind"), s.get("url"), s.get("status"),
+                    s.get("lastFetchedAt"), s.get("lastHttpStatus"), s.get("lastChangeStatus"), s.get("note"),
+                ]
+                for s in sources
+            ],
+        )
+
+    if dataset == "artifacts":
+        return _csv_response(
+            f"抓取记录-{label}.csv",
+            _EXPORT_ARTIFACT_HEADER,
+            [
+                [
+                    a.get("artifactId"), a.get("sourceId"), a.get("cityId"), a.get("requestedUrl"), a.get("finalUrl"),
+                    a.get("fetchedAt"), a.get("httpStatus"), a.get("contentType"), a.get("contentLength"),
+                    a.get("sha256"), a.get("title"), a.get("changeStatus"), a.get("status"), a.get("errorMessage"),
+                ]
+                for a in artifacts
+            ],
+        )
+
+    return _csv_response(
+        f"政策字段-{label}.csv",
+        _EXPORT_FIELD_HEADER,
+        [
+            [
+                f.get("city"), f.get("projectName"), f.get("scenarioName"), f.get("fieldId"), f.get("name"),
+                f.get("unit"), f.get("sourceType"), f.get("currentValue"), f.get("suggestedValue"),
+                f.get("valueState"), _source_name_of(f), f.get("suggestedAt"),
+            ]
+            for f in field_rows
+        ],
     )
 
 
