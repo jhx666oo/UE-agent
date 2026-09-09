@@ -1,0 +1,59 @@
+# PRD v1.1 实施进度与待办（交接记录）
+
+> 更新时间：2026-09-09 晚。分支 `codex/dashboard-data-sync`。
+> 本文档供下一个接手的 agent / 开发者继续实施 PRD v1.1（`docs/product/UE-Agent-产品需求文档-v1.0.md`）使用。
+
+## 已完成（全部已推送）
+
+### M1 本地 SQLite 可交付运行（1588752）
+- `SqliteProjectRepository`：业务列+索引、快照 JSON 列、WAL、每操作短连接；与 JSON 仓储同契约（`ProjectRepository` 协议）
+- 迁移脚本按方言分目录：`services/api/migrations/sqlite/`（001 建表、002 字段值、003 来源抓取配置）、`postgres/`（旧）
+- `pnpm bootstrap`（幂等，库空时导入 projects.json）、`pnpm data:backup` / `data:restore`（恢复先把现有数据移入 pre-restore 副本，无删除操作）
+- `pnpm dev:all` 一键起 API+前端；本地交付文档 `docs/deployment/local.md`
+- 本地真实数据已迁移（2 项目 4 场景 3 快照），重启持久化已验证
+
+### M2 字段契约与字段值四元组（3a12160、2df4bd7）
+- `u1.parameters.json` 75 字段全部带 `block`/`blockOrder`（PRD 14.1 八分组）+ 8 个枚举参数 `options`，spec 契约测试锁定
+- `GET /api/fields?block=` 控件契约（readOnly/editable/options）
+- 场景创建/更新校验：公式自动字段（C9/P3/S3/S5/B12/B16）拒绝写入 `FORMULA_FIELD_READ_ONLY`、未知编号 `UNKNOWN_FIELD`、枚举越界 `INVALID_FIELD_VALUE`
+- 字段值四元组：`scenario_field_values`（SQLite）+ `fieldValues`/`fieldValueHistory`（JSON），建议值未采用永不参与计算
+- `GET /scenarios/{id}/values`、`PATCH .../values/{fieldId}`、`POST .../accept-suggestion`；普通 PUT 碰到爬虫字段自动标 `overridden`
+
+### M3 抓取链（85970b2）
+- `app/crawlers/`：仅 http/https、拒绝私有/回环/链路本地（SSRF）、最多 5 次重定向且每次重校验、超时≤60s、大小≤20MB、可识别 UA、原子落盘 `raw_sources/<sha256>.bin`
+- `POST /policies/sources/{id}/crawl`：每次抓取留 `crawl_artifacts` 记录，变更比对 first_fetch/unchanged/new_version，失败也留记录且不删上次成功
+- HTML 标题/可读文本提取；`parse_suggestions`（P1/P2/P8 模式）生成建议值写入同城市场景四元组
+- 来源配置增强：timeoutSeconds/maxBytes/note/lastFetchedAt/lastHttpStatus/lastChangeStatus（PUT 可改）
+- 手动上传路由已移除：`POST /policies/documents/upload` 返回 404 `UPLOAD_NOT_AVAILABLE`；`app/(workspace)/policies/[cityId]` 上传面板组件已删
+
+### M4 前端（本次提交，进度见下）
+- M4a 导航四项化完成：`lib/navigation.ts` 总览/城市测算/政策资料/城市对比（`/?scope=compare`），删「参数设置」项；`/settings` 页面仍在但不在主导航；全站术语统一（城市测算/新增城市/打开城市）
+- M4b 城市测算页完成：`FieldValueControl` 四类数据源交互（内部填写=普通输入、自动爬虫=灰色建议值+采用按钮+查看来源、公式自动=浅绿只读框、其他来源=可留空），枚举渲染下拉；`city-project-workbench` 改为字段值驱动 + 按八分组渲染 + 乐观更新 PATCH + 接受建议值后标待重算
+- M4c 政策页完成：`policy-city-detail` 重构为官网来源列表（新增/启停/立即抓取）+ 抓取历史（含建议值摘要/失败原因/查看原文）+ 关联城市；`lib/policies.ts` 全套抓取 API
+- M4d 验证通过：后端 101 项、前端 27 项、typecheck、eslint 全绿
+
+## 待办（按优先级）
+
+1. **真实浏览器端到端验收（M4 收尾）**：起 `pnpm dev:all`（或分别 `pnpm api:dev` + `pnpm dev`），浏览器验证：
+   - 政策页新增来源 → 立即抓取（可用本地起一个静态页测试，或真实政府官网 URL）→ 抓取历史出现记录与建议值
+   - 城市测算页出现灰色建议值 → 点击「采用建议值」→ 状态变已采用、场景变待重算 → 运行测算 → 新快照进仪表盘
+   - 手工改爬虫字段 → 状态变「已手动覆盖」且建议值保留
+   - 旧数据里两个测试项目（「进程验证项目」「SQLite 重启验证」）可考虑清理（注意 PRD 禁止静默删除，需用户确认）
+2. **`/settings` 页处理**：PRD 说参数设置不作为主导航；页面本身保留为字段字典只读参考页没问题，但建议改为从城市测算页可达，或直接下线该路由
+3. **旧导航测试清理**：`components/u1-workbench.tsx` 与 `components/u1-parameter-field.tsx` 已被 `FieldValueControl`/`city-project-workbench` 取代，仅 `/u1` 兼容跳转引用；确认无引用后删除（连带 `lib/u1.ts`、对应测试）
+4. **仪表盘筛选进 URL**（PRD 9.2/nuqs）：dashboard-filters 的 scope/cityIds/period 目前不进 URL，「城市对比」导航用 `/?scope=compare`，需要 nuqs 接住并联动
+5. **PRD 16.6 城市级字段值接口**：现在是 `/scenarios/{id}/values`（场景级），PRD 写的是 `/cities/{cityId}/values`；若产品确认一座城市一个主对象，可在路由层加别名，不动存储
+6. **导出接口**（PRD 16.7 CSV/JSON/ZIP）完全未做，P0 清单项
+7. **错误结构补全**：PRD 16.8 要求 error 带 field/requestId，现在只有 code/message
+8. **B12 GR 公关费用**：参数字典标「公式自动」但 Excel E47 是常量 5000，引擎目前当普通必填输入读（engine.py 中 `B12` 仍 required）。需要业务确认后决定：改为只读常量公式 + issue 标记，属于模型语义变更，勿擅自改（AGENTS.md 门禁）
+9. **提交纪律**：每个里程碑单独 commit + push（push 偶发 Empty reply，重试即可）；测试门禁 = `pnpm model:test` + `pnpm api:test`（uv）+ `apps/web` 下 vitest/tsc/eslint
+
+## 验证命令速查
+
+```bash
+pnpm model:test   # 纯计算域（python3 直接跑）
+pnpm api:test     # API 全量（uv；或 PYTHONPATH=services/api services/api/.venv/bin/python -m unittest discover -s services/api/tests -p 'test_*.py'）
+cd apps/web && ../apps/web/node_modules/.bin/vitest run   # 前端（本机 pnpm 不在 PATH，直接用 node_modules/.bin）
+```
+
+注意：本机 shell 没有 pnpm/corepack，Python 用 `services/api/.venv/bin/python` 直跑。

@@ -475,6 +475,7 @@ def _field_value_view(
         "suggestedSource": row.get("suggestedSource") if row else None,
         "suggestedAt": row.get("suggestedAt") if row else None,
         "valueState": state,
+        "options": entry.get("options"),
     }
 
 

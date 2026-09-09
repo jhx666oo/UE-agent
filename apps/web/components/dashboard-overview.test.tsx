@@ -85,7 +85,7 @@ describe("DashboardOverview", () => {
     render(<DashboardOverview initialData={empty} />);
 
     expect(screen.getByText("暂无有效测算结果")).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "进入城市项目" })).toHaveAttribute("href", "/projects");
+    expect(screen.getByRole("link", { name: "进入城市测算" })).toHaveAttribute("href", "/projects");
   });
 
   it("keeps stale, policy and issue alerts visible with next-step links", () => {

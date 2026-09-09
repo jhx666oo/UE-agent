@@ -21,7 +21,7 @@ export function Topbar() {
       <Button asChild size="sm" className="min-w-[104px] shrink-0">
         <Link href="/projects/new">
           <IconPlus size={15} stroke={1.8} />
-          <span className="whitespace-nowrap">新建项目</span>
+          <span className="whitespace-nowrap">新增城市</span>
         </Link>
       </Button>
     </header>

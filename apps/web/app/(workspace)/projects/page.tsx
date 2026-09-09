@@ -39,12 +39,12 @@ export default function ProjectsPage() {
       <PageHeader
         eyebrow="PROJECTS"
         title="项目"
-        description="每个城市项目都记录范围、场景、模型版本和复核状态。"
+        description="每个城市测算对象都记录范围、场景、模型版本和复核状态。"
         actions={
           <Button asChild>
             <Link href="/projects/new">
               <IconFolderPlus size={16} stroke={1.8} />
-              新建项目
+              新增城市
             </Link>
           </Button>
         }
@@ -59,7 +59,7 @@ export default function ProjectsPage() {
           <CardContent className="p-5 text-sm text-danger">{error}</CardContent>
         </Card>
       ) : projects.length === 0 ? (
-        <EmptyState title="还没有城市项目" description="创建第一个城市项目后，可以进入参数配置、场景测算和结果复核。" actionLabel="创建项目" actionHref="/projects/new" />
+        <EmptyState title="还没有城市测算对象" description="新增第一个城市后，可以进入参数配置、场景测算和结果复核。" actionLabel="新增城市" actionHref="/projects/new" />
       ) : (
         <div className="grid gap-4 lg:grid-cols-2">
           {projects.map((project) => (
@@ -77,7 +77,7 @@ export default function ProjectsPage() {
                   const profit = metrics.platform_monthly_net_profit?.value;
                   return <div className="grid gap-3 sm:grid-cols-3"><div><p className="text-xs text-muted-foreground">当前场景</p><p className="mt-1 text-sm font-medium">{latest?.name ?? "尚未创建"}</p></div><div><p className="text-xs text-muted-foreground">状态</p><div className="mt-1"><Badge variant={status.variant}>{status.label}</Badge></div></div><div><p className="text-xs text-muted-foreground">最近测算</p><p className="mt-1 text-sm text-muted-foreground">{latest?.calculatedAt ? new Date(latest.calculatedAt).toLocaleString("zh-CN") : "—"}</p></div><div><p className="text-xs text-muted-foreground">回本周期</p><p className="mt-1 text-sm tabular-nums">{typeof payback === "number" ? `${formatDashboardNumber(payback)} 个月` : "—"}</p></div><div><p className="text-xs text-muted-foreground">平台期月净利润</p><p className="mt-1 text-sm tabular-nums">{typeof profit === "number" ? formatDashboardMoney(profit) : "—"}</p></div><div><p className="text-xs text-muted-foreground">场景数量</p><p className="mt-1 text-sm tabular-nums">{project.scenarios.length} 个</p></div></div>;
                 })()}
-                <div className="flex items-center justify-between gap-4 border-t border-border pt-3"><p className="text-xs text-muted-foreground">更新于 {new Date(project.updatedAt).toLocaleString("zh-CN")}</p><Button asChild size="sm" variant="outline"><Link href={`/projects/${project.id}`}>打开项目</Link></Button></div>
+                <div className="flex items-center justify-between gap-4 border-t border-border pt-3"><p className="text-xs text-muted-foreground">更新于 {new Date(project.updatedAt).toLocaleString("zh-CN")}</p><Button asChild size="sm" variant="outline"><Link href={`/projects/${project.id}`}>打开城市</Link></Button></div>
               </CardContent>
             </Card>
           ))}

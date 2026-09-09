@@ -3,8 +3,7 @@ import React from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { PolicyCityDetail } from "./policy-city-detail";
 import { PolicyOverview } from "./policy-overview";
-import { PolicyUploadPanel } from "./policy-upload-panel";
-import type { PolicyCityDetailResponse, PolicyOverviewResponse } from "@/lib/policies";
+import type { CrawlArtifact, PolicyCityDetailResponse, PolicyOverviewResponse } from "@/lib/policies";
 
 const overview: PolicyOverviewResponse = {
   cities: [
@@ -18,7 +17,6 @@ const overview: PolicyOverviewResponse = {
       completeness: 75,
       sourceStatus: "active",
       affectedProjectCount: 2,
-      approvedFacts: [],
     },
   ],
   pendingReviewCount: 1,
@@ -29,27 +27,56 @@ const overview: PolicyOverviewResponse = {
 const detail: PolicyCityDetailResponse = {
   cityId: "changsha",
   cityName: "长沙",
-  documents: [
-    {
-      id: "policy-1",
-      cityId: "changsha",
-      originalName: "长护险办法.docx",
-      mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-      size: 1024,
-      sha256: "abc",
-      source: "官方公告",
-      storedPath: "policy_files/policy-1.docx",
-      status: "review_pending",
-      uploadedAt: "2026-09-08T00:00:00Z",
-      updatedAt: "2026-09-08T00:00:00Z",
-    },
+  documents: [],
+  dataSources: [
+    { id: "source-1", cityId: "changsha", name: "长沙医保局", kind: "government", url: "https://example.test", status: "active", createdAt: "2026-09-08T00:00:00Z", updatedAt: "2026-09-08T00:00:00Z" },
   ],
-  dataSources: [{ id: "source-1", cityId: "changsha", name: "官方公告", kind: "web", url: "https://example.test", status: "active", createdAt: "2026-09-08T00:00:00Z", updatedAt: "2026-09-08T00:00:00Z" }],
-  facts: [{ id: "fact-1", documentId: "policy-1", cityId: "changsha", fieldId: "fundPaymentRatio", value: 0.85, unit: "比例", confidence: 0.92, source: "第4条", status: "candidate", reviewer: null, reviewedAt: null, effectiveDate: null, createdAt: "2026-09-08T00:00:00Z", updatedAt: "2026-09-08T00:00:00Z" }],
+  facts: [],
   approvedFacts: [],
-  pendingReviewCount: 1,
+  pendingReviewCount: 0,
   projects: [{ id: "project-1", name: "长沙项目" }],
 };
+
+const artifacts: CrawlArtifact[] = [
+  {
+    artifactId: "artifact-1",
+    sourceId: "source-1",
+    cityId: "changsha",
+    requestedUrl: "https://example.test/policy",
+    finalUrl: "https://example.test/policy",
+    fetchedAt: "2026-09-08T00:00:00Z",
+    httpStatus: 200,
+    contentType: "text/html; charset=utf-8",
+    contentLength: 1234,
+    sha256: "abc",
+    storedPath: "raw_sources/abc.bin",
+    title: "长期护理保险政策",
+    changeStatus: "first_fetch",
+    status: "success",
+    errorMessage: null,
+    suggestions: [
+      { fieldId: "P1", name: "单小时服务单价", value: 60, quote: "单小时服务单价为 60 元" },
+      { fieldId: "P2", name: "基金支付比例", value: 0.8, quote: "基金支付比例 80%" },
+    ],
+  },
+  {
+    artifactId: "artifact-2",
+    sourceId: "source-1",
+    cityId: "changsha",
+    requestedUrl: "https://example.test/policy",
+    finalUrl: null,
+    fetchedAt: "2026-09-09T00:00:00Z",
+    httpStatus: null,
+    contentType: null,
+    contentLength: null,
+    sha256: null,
+    storedPath: null,
+    title: null,
+    changeStatus: null,
+    status: "failed",
+    errorMessage: "官网抓取超时，请稍后重试或调整超时设置",
+  },
+];
 
 afterEach(() => cleanup());
 
@@ -59,8 +86,8 @@ describe("policy center", () => {
     render(<PolicyOverview initialData={overview} onCityChange={onCityChange} />);
 
     expect(screen.getByRole("heading", { name: "政策资料" })).toBeInTheDocument();
-    expect(screen.getByText("待审核 1" )).toBeInTheDocument();
-    expect(screen.getByText("已确认 3" )).toBeInTheDocument();
+    expect(screen.getByText("待审核 1")).toBeInTheDocument();
+    expect(screen.getByText("已确认 3")).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText("城市"), { target: { value: "changsha" } });
     expect(onCityChange).toHaveBeenCalledWith("changsha");
   });
@@ -70,33 +97,83 @@ describe("policy center", () => {
     expect(screen.getByText("暂无政策资料")).toBeInTheDocument();
   });
 
-  it("keeps candidate review explicit and warns against overwriting project inputs", () => {
-    const onReview = vi.fn();
-    render(<PolicyCityDetail data={detail} onReview={onReview} />);
+  it("shows source config, crawl history with suggestions and keeps inputs safe", () => {
+    render(
+      <PolicyCityDetail
+        data={detail}
+        sources={detail.dataSources}
+        artifacts={artifacts}
+      />,
+    );
 
-    expect(screen.getByText("待审核")).toBeInTheDocument();
-    expect(screen.getByText("fundPaymentRatio")).toBeInTheDocument();
-    expect(screen.getByText("政策候选值不会自动覆盖项目参数；请在城市项目页面人工确认参考值后再保存和重算。")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "通过" }));
-    expect(onReview).toHaveBeenCalledWith("policy-1", "fact-1", "approve");
+    // 来源列表带状态与最近抓取信息
+    expect(screen.getByText("长沙医保局")).toBeInTheDocument();
+    // 抓取历史：成功记录显示标题、指纹状态与建议值，失败记录保留原因
+    expect(screen.getByText("长期护理保险政策")).toBeInTheDocument();
+    expect(screen.getByText("首次抓取")).toBeInTheDocument();
+    expect(screen.getByText(/P1=60/)).toBeInTheDocument();
+    expect(screen.getByText(/P2=0.8/)).toBeInTheDocument();
+    expect(screen.getByText(/官网抓取超时/)).toBeInTheDocument();
+    // 不会自动覆盖参数的提示
+    expect(
+      screen.getByText(
+        "建议值以灰色提示展示在城市测算页，点击「采用建议值」后才写入参数；手工填写会标记为已覆盖并保留建议值来源。",
+      ),
+    ).toBeInTheDocument();
   });
 
-  it("submits explicit candidate JSON for local parsing before review", async () => {
-    const onParse = vi.fn().mockResolvedValue(undefined);
-    render(<PolicyCityDetail data={detail} onParse={onParse} />);
+  it("triggers a crawl from the source row", async () => {
+    const onCrawl = vi.fn().mockResolvedValue(undefined);
+    render(
+      <PolicyCityDetail
+        data={detail}
+        sources={detail.dataSources}
+        artifacts={[]}
+        onCrawl={onCrawl}
+      />,
+    );
 
-    fireEvent.change(screen.getByRole("textbox", { name: /候选字段 JSON/ }), { target: { value: '[{"fieldId":"P2","value":0.85}]' } });
-    fireEvent.click(screen.getByRole("button", { name: "解析候选字段" }));
-
-    await waitFor(() => expect(onParse).toHaveBeenCalledWith("policy-1", [{ fieldId: "P2", value: 0.85 }]));
+    fireEvent.click(screen.getByRole("button", { name: "立即抓取" }));
+    await waitFor(() => expect(onCrawl).toHaveBeenCalledWith(detail.dataSources[0]));
   });
 
-  it("accepts only local Word, Excel and PDF files", async () => {
-    const onUpload = vi.fn().mockResolvedValue({ ...detail.documents[0], status: "uploaded" });
-    render(<PolicyUploadPanel cityId="changsha" onUpload={onUpload} />);
-    const input = screen.getByLabelText("上传政策文件");
-    fireEvent.change(input, { target: { files: [new File(["policy"], "policy.pdf", { type: "application/pdf" })] } });
-    await waitFor(() => expect(onUpload).toHaveBeenCalled());
-    expect(onUpload).toHaveBeenCalledWith(expect.objectContaining({ name: "policy.pdf" }), "changsha");
+  it("creates a new source from the form", async () => {
+    const onCreateSource = vi.fn().mockResolvedValue(undefined);
+    render(
+      <PolicyCityDetail
+        data={detail}
+        sources={[]}
+        artifacts={[]}
+        onCreateSource={onCreateSource}
+      />,
+    );
+
+    fireEvent.change(screen.getByLabelText("来源名称"), { target: { value: "长沙民政局" } });
+    fireEvent.change(screen.getByLabelText("官网链接"), { target: { value: "https://mzj.example.gov.cn" } });
+    fireEvent.click(screen.getByRole("button", { name: /新增来源/ }));
+
+    await waitFor(() =>
+      expect(onCreateSource).toHaveBeenCalledWith({
+        name: "长沙民政局",
+        url: "https://mzj.example.gov.cn",
+      }),
+    );
+  });
+
+  it("disables crawl for a paused source and offers re-enabling", async () => {
+    const onToggleSource = vi.fn().mockResolvedValue(undefined);
+    const paused = [{ ...detail.dataSources[0], status: "paused" as const }];
+    render(
+      <PolicyCityDetail
+        data={detail}
+        sources={paused}
+        artifacts={[]}
+        onToggleSource={onToggleSource}
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: "立即抓取" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "启用" }));
+    await waitFor(() => expect(onToggleSource).toHaveBeenCalledWith(paused[0]));
   });
 });

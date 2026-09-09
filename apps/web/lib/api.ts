@@ -17,6 +17,37 @@ export type ParameterDefinition = {
   sourceType: string;
   required: boolean;
   parityStatus: "parity" | "needs_business_confirmation";
+  block: string;
+  blockOrder: number;
+  options?: string[] | null;
+};
+
+export type FieldValueState = "empty" | "suggestion_ready" | "accepted" | "overridden" | "manual" | "formula";
+
+export type FieldValueView = {
+  fieldId: string;
+  name: string;
+  unit: string;
+  sourceType: string;
+  block: string;
+  blockOrder: number;
+  readOnly: boolean;
+  currentValue: number | string | null;
+  suggestedValue: number | string | null;
+  suggestedSource: {
+    sourceName?: string;
+    url?: string;
+    artifactId?: string;
+    quote?: string;
+  } | null;
+  suggestedAt: string | null;
+  valueState: FieldValueState;
+  options?: string[] | null;
+};
+
+export type ScenarioValuesResponse = {
+  scenarioId: string;
+  fields: FieldValueView[];
 };
 
 export type U1ModelSpec = {
@@ -185,4 +216,21 @@ export function confirmScenario(projectId: string, scenarioId: string) {
 
 export function calculateScenario(projectId: string, scenarioId: string) {
   return apiFetch<U1Result>(`/api/projects/${projectId}/scenarios/${scenarioId}/calculate`, { method: "POST" });
+}
+
+export function listScenarioValues(projectId: string, scenarioId: string) {
+  return apiFetch<ScenarioValuesResponse>(`/api/projects/${projectId}/scenarios/${scenarioId}/values`);
+}
+
+export function patchScenarioValue(projectId: string, scenarioId: string, fieldId: string, value: number | string | null) {
+  return apiFetch<FieldValueView>(`/api/projects/${projectId}/scenarios/${scenarioId}/values/${encodeURIComponent(fieldId)}`, {
+    method: "PATCH",
+    body: JSON.stringify({ value }),
+  });
+}
+
+export function acceptFieldSuggestion(projectId: string, scenarioId: string, fieldId: string) {
+  return apiFetch<FieldValueView>(`/api/projects/${projectId}/scenarios/${scenarioId}/values/${encodeURIComponent(fieldId)}/accept-suggestion`, {
+    method: "POST",
+  });
 }

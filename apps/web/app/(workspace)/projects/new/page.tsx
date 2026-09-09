@@ -24,7 +24,7 @@ export default function NewProjectPage() {
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!name.trim() || !city.trim()) {
-      setError("请填写项目名称和目标城市");
+      setError("请填写城市测算名称和目标城市");
       return;
     }
     setSaving(true);
@@ -49,7 +49,7 @@ export default function NewProjectPage() {
     <div className="space-y-6">
       <PageHeader
         eyebrow="NEW PROJECT"
-        title="新建项目"
+        title="新增城市"
         description="先确定项目身份和测算基准，后续步骤会沿用这组信息。"
         actions={
           <Button asChild variant="ghost">
@@ -62,12 +62,12 @@ export default function NewProjectPage() {
         <Card>
         <CardHeader>
           <CardTitle>项目基本信息</CardTitle>
-          <CardDescription>项目创建后会自动生成基准场景，并进入城市项目参数配置。</CardDescription>
+          <CardDescription>城市创建后会自动生成基准场景，并进入城市测算参数配置。</CardDescription>
         </CardHeader>
         <CardContent className="space-y-5">
           <div className="space-y-2">
-            <Label htmlFor="project-name">项目名称</Label>
-            <Input id="project-name" value={name} onChange={(event) => setName(event.target.value)} placeholder="例如：湖南长护险 U1 城市选址" />
+            <Label htmlFor="project-name">城市测算名称</Label>
+            <Input id="project-name" value={name} onChange={(event) => setName(event.target.value)} placeholder="例如：湖南长护险城市选址测算" />
           </div>
           <div className="grid gap-5 sm:grid-cols-2">
             <div className="space-y-2">

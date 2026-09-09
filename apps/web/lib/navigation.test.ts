@@ -8,8 +8,21 @@ describe("isNavigationItemActive", () => {
     expect(isNavigationItemActive("/", "/")).toBe(true);
   });
 
-  it("keeps the primary navigation focused on business modules", () => {
-    expect(primaryNavigation.map((item) => item.label)).toEqual(["总览", "城市项目", "政策资料", "参数设置"]);
-    expect(primaryNavigation.some((item) => item.label.includes("工作台") || item.label.includes("U1"))).toBe(false);
+  it("ignores query strings when matching city compare", () => {
+    expect(isNavigationItemActive("/", "/?scope=compare")).toBe(true);
+    expect(isNavigationItemActive("/projects", "/?scope=compare")).toBe(false);
+  });
+
+  it("keeps the primary navigation to the four PRD modules", () => {
+    expect(primaryNavigation.map((item) => item.label)).toEqual([
+      "总览",
+      "城市测算",
+      "政策资料",
+      "城市对比",
+    ]);
+    const banned = ["工作台", "U1", "城市项目", "参数设置"];
+    expect(
+      primaryNavigation.some((item) => banned.some((word) => item.label.includes(word))),
+    ).toBe(false);
   });
 });

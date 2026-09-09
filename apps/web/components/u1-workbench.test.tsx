@@ -18,6 +18,8 @@ const spec: U1ModelSpec = {
       sourceType: "内部填写",
       required: true,
       parityStatus: "parity",
+      block: "辅助收入",
+      blockOrder: 7,
     },
     {
       id: "P3",
@@ -30,6 +32,8 @@ const spec: U1ModelSpec = {
       sourceType: "公式自动",
       required: false,
       parityStatus: "parity",
+      block: "政策准入",
+      blockOrder: 2,
     },
   ],
   baselineInputs: { A1: 0 },

@@ -1,25 +1,7 @@
 import { apiFetch, buildApiUrl } from "@/lib/api";
 
 export type PolicyDocumentStatus = "uploaded" | "parsing" | "review_pending" | "approved" | "rejected";
-export type PolicyFactStatus = "candidate" | "approved" | "rejected";
 export type DataSourceStatus = "active" | "paused" | "error";
-
-export type PolicyFact = {
-  id: string;
-  documentId: string;
-  cityId: string;
-  fieldId: string;
-  value: unknown;
-  unit: string | null;
-  confidence: number | null;
-  source: string | null;
-  status: PolicyFactStatus;
-  reviewer: string | null;
-  reviewedAt: string | null;
-  effectiveDate: string | null;
-  createdAt: string;
-  updatedAt: string;
-};
 
 export type PolicyDocument = {
   id: string;
@@ -44,8 +26,33 @@ export type DataSource = {
   kind: string;
   url: string | null;
   status: DataSourceStatus;
+  timeoutSeconds?: number | null;
+  maxBytes?: number | null;
+  note?: string | null;
+  lastFetchedAt?: string | null;
+  lastHttpStatus?: number | null;
+  lastChangeStatus?: string | null;
   createdAt: string;
   updatedAt: string;
+};
+
+export type CrawlArtifact = {
+  artifactId: string;
+  sourceId: string;
+  cityId: string;
+  requestedUrl: string;
+  finalUrl: string | null;
+  fetchedAt: string;
+  httpStatus: number | null;
+  contentType: string | null;
+  contentLength: number | null;
+  sha256: string | null;
+  storedPath: string | null;
+  title: string | null;
+  changeStatus: "first_fetch" | "unchanged" | "new_version" | null;
+  status: "success" | "failed";
+  errorMessage: string | null;
+  suggestions?: Array<{ fieldId: string; name: string; value: number | string; quote: string }>;
 };
 
 export type PolicyCitySummary = {
@@ -58,7 +65,6 @@ export type PolicyCitySummary = {
   completeness: number | null;
   sourceStatus: DataSourceStatus | "missing";
   affectedProjectCount: number;
-  approvedFacts: PolicyFact[];
 };
 
 export type PolicyAlert = {
@@ -82,18 +88,20 @@ export type PolicyCityDetailResponse = {
   cityName: string;
   documents: PolicyDocument[];
   dataSources: DataSource[];
-  facts: PolicyFact[];
-  approvedFacts: PolicyFact[];
+  facts: unknown[];
+  approvedFacts: unknown[];
   pendingReviewCount: number;
   projects: Array<{ id: string; name: string }>;
 };
 
-export type PolicyCandidateInput = {
-  fieldId: string;
-  value: unknown;
-  unit?: string | null;
-  confidence?: number | null;
-  source?: string | null;
+export type DataSourceInput = {
+  cityId: string;
+  name: string;
+  kind?: string;
+  url: string;
+  timeoutSeconds?: number | null;
+  maxBytes?: number | null;
+  note?: string | null;
 };
 
 export function getPolicyOverview(cityIds: string[] = []) {
@@ -105,36 +113,35 @@ export function getPolicyCityDetail(cityId: string) {
   return apiFetch<PolicyCityDetailResponse>(`/api/policies/cities/${encodeURIComponent(cityId)}`);
 }
 
-export function uploadPolicyDocument(file: File, cityId: string, source = "本地上传") {
-  const body = new FormData();
-  body.append("cityId", cityId);
-  body.append("source", source);
-  body.append("file", file);
-  return apiFetch<PolicyDocument>("/api/policies/documents/upload", { method: "POST", body });
+export function listPolicySources(cityId?: string) {
+  const query = cityId ? `?cityId=${encodeURIComponent(cityId)}` : "";
+  return apiFetch<DataSource[]>(`/api/policies/sources${query}`);
 }
 
-export function getPolicyDocumentContentUrl(documentId: string) {
-  return buildApiUrl(`/api/policies/documents/${encodeURIComponent(documentId)}/content`);
+export function createPolicySource(input: DataSourceInput) {
+  return apiFetch<DataSource>("/api/policies/sources", { method: "POST", body: JSON.stringify(input) });
 }
 
-export function parsePolicyDocument(documentId: string, candidates: PolicyCandidateInput[] = []) {
-  return apiFetch<PolicyDocument>(`/api/policies/documents/${documentId}/parse`, {
-    method: "POST",
-    body: JSON.stringify({ candidates }),
-  });
-}
-
-export function reviewPolicyFact(
-  documentId: string,
-  factId: string,
-  decision: "approve" | "reject",
-  reviewer: string,
-  options: { source?: string; effectiveDate?: string } = {},
+export function updatePolicySource(
+  sourceId: string,
+  input: Partial<Pick<DataSource, "name" | "kind" | "url" | "status" | "timeoutSeconds" | "maxBytes" | "note">>,
 ) {
-  return apiFetch<PolicyFact>(`/api/policies/documents/${documentId}/facts/${factId}/review`, {
-    method: "POST",
-    body: JSON.stringify({ decision, reviewer, ...options }),
+  return apiFetch<DataSource>(`/api/policies/sources/${encodeURIComponent(sourceId)}`, {
+    method: "PUT",
+    body: JSON.stringify(input),
   });
+}
+
+export function crawlPolicySource(sourceId: string) {
+  return apiFetch<CrawlArtifact>(`/api/policies/sources/${encodeURIComponent(sourceId)}/crawl`, { method: "POST" });
+}
+
+export function listSourceArtifacts(sourceId: string) {
+  return apiFetch<CrawlArtifact[]>(`/api/policies/sources/${encodeURIComponent(sourceId)}/artifacts`);
+}
+
+export function getCrawlArtifactUrl(artifactId: string) {
+  return buildApiUrl(`/api/policies/artifacts/${encodeURIComponent(artifactId)}/content`);
 }
 
 export function formatPolicyDate(value: string | null | undefined): string {

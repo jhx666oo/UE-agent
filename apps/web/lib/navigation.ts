@@ -1,10 +1,10 @@
-import { IconBuilding, IconFileText, IconLayoutDashboard, IconSettings } from "@tabler/icons-react";
+import { IconChartArcs, IconBuilding, IconFileText, IconLayoutDashboard } from "@tabler/icons-react";
 
 export const primaryNavigation = [
   { label: "总览", href: "/", icon: IconLayoutDashboard },
-  { label: "城市项目", href: "/projects", icon: IconBuilding },
+  { label: "城市测算", href: "/projects", icon: IconBuilding },
   { label: "政策资料", href: "/policies", icon: IconFileText },
-  { label: "参数设置", href: "/settings", icon: IconSettings },
+  { label: "城市对比", href: "/?scope=compare", icon: IconChartArcs },
 ] as const;
 
 function normalizePath(path: string) {
@@ -14,7 +14,7 @@ function normalizePath(path: string) {
 
 export function isNavigationItemActive(pathname: string, href: string) {
   const currentPath = normalizePath(pathname);
-  const targetPath = normalizePath(href);
+  const targetPath = normalizePath(href.split("?")[0]);
 
   if (targetPath === "/") return currentPath === "/";
   return currentPath === targetPath || currentPath.startsWith(`${targetPath}/`);

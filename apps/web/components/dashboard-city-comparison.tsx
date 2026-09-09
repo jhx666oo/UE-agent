@@ -41,7 +41,7 @@ export function DashboardCityComparison({ cities }: Readonly<{ cities: Dashboard
                   <td className="px-5 py-3 text-right tabular-nums">{city.metrics.paybackMonth === null ? "—" : `${formatDashboardNumber(city.metrics.paybackMonth)} 个月`}</td>
                   <td className="px-5 py-3"><Badge variant={status.variant}>{status.label}</Badge>{city.issueCount > 0 ? <span className="ml-2 text-xs text-warning">{city.issueCount} 项待确认</span> : null}</td>
                   <td className="px-5 py-3 text-muted-foreground">{formatDashboardDate(city.scenario.calculatedAt)}</td>
-                  <td className="px-5 py-3 text-right"><Link className="text-info underline-offset-4 hover:underline" href={`/projects/${city.projectId ?? ""}`}>查看项目</Link></td>
+                  <td className="px-5 py-3 text-right"><Link className="text-info underline-offset-4 hover:underline" href={`/projects/${city.projectId ?? ""}`}>查看城市</Link></td>
                 </tr>
               );
             })}

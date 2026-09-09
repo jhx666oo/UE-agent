@@ -87,7 +87,7 @@ export function DashboardOverview({
       <DashboardFilters query={query} cities={cities} onChange={changeQuery} />
       {error ? <Card className="border-danger/30"><CardContent className="p-4 text-sm text-danger">{error}。当前仍显示最近一次成功加载的数据。</CardContent></Card> : null}
       <p className="text-sm text-muted-foreground">{summaryText}</p>
-      {hasValidCity ? <DashboardMetricGrid summary={data.summary} /> : <EmptyState title="暂无有效测算结果" description="当前筛选范围内还没有成功测算的城市。进入城市项目配置参数并运行测算后，这里会自动汇总结果。" actionLabel="进入城市项目" actionHref="/projects" />}
+      {hasValidCity ? <DashboardMetricGrid summary={data.summary} /> : <EmptyState title="暂无有效测算结果" description="当前筛选范围内还没有成功测算的城市。进入城市测算配置参数并运行测算后，这里会自动汇总结果。" actionLabel="进入城市测算" actionHref="/projects" />}
       <div className="grid gap-5 xl:grid-cols-12">
         <div className="space-y-5 xl:col-span-8"><DashboardChart title="经营趋势" type="trend" data={data.trend} /><DashboardCityComparison cities={data.cities} /></div>
         <div className="space-y-5 xl:col-span-4"><DashboardChart title="月收入与月净利润对比" type="comparison" data={data.cities.map((city) => ({ cityName: city.cityName, monthlyRevenue: city.metrics.monthlyRevenue, monthlyNetProfit: city.metrics.monthlyNetProfit })).filter((city) => city.monthlyRevenue !== null || city.monthlyNetProfit !== null)} /><DashboardAlerts alerts={alerts} /></div>

@@ -11,7 +11,7 @@ describe("Topbar", () => {
   it("keeps the new-project action horizontal and wide enough for Chinese text", () => {
     render(<Topbar />);
 
-    const action = screen.getByRole("link", { name: "新建项目" });
+    const action = screen.getByRole("link", { name: "新增城市" });
     expect(action).toHaveClass("min-w-[104px]");
     expect(action).toHaveClass("whitespace-nowrap");
   });
