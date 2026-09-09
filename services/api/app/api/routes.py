@@ -13,7 +13,7 @@ from ..domain.u1.models import FormulaValue, ModelIssue, MonthlyProjection, U1Re
 from ..domain.u1.spec import load_json_spec, load_parameter_catalog
 from ..domain.dashboard.aggregator import build_dashboard_overview
 from ..domain.policy.service import PolicyService
-from ..repository import JsonProjectRepository
+from ..repository import ProjectRepository
 from .schemas import (
     DataSourceCreate,
     DataSourceUpdate,
@@ -28,7 +28,7 @@ from .schemas import (
 router = APIRouter()
 
 
-def repository_from_request(request: Request) -> JsonProjectRepository:
+def repository_from_request(request: Request) -> ProjectRepository:
     return request.app.state.repository
 
 

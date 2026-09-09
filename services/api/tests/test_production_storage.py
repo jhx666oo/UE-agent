@@ -9,6 +9,7 @@ from unittest.mock import patch
 
 from app.main import allowed_origins, create_repository
 from app.repository import JsonProjectRepository, VercelBlobPolicyFileStore
+from app.sqlite_repository import SqliteProjectRepository
 
 
 class FakeBlobClient:
@@ -38,6 +39,21 @@ class ProductionStorageTests(TestCase):
 
         repository_class.assert_called_once()
         self.assertIs(repository, repository_class.return_value)
+
+    def test_local_default_selects_sqlite_repository(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            database = Path(directory) / "ue-agent.sqlite3"
+            with patch.dict(
+                os.environ,
+                {"DATABASE_URL": "", "UE_AGENT_DB_FILE": str(database)},
+                clear=False,
+            ):
+                repository = create_repository()
+
+            self.assertIsInstance(repository, SqliteProjectRepository)
+            self.assertTrue(database.exists())
+            self.assertTrue((Path(directory) / "policy_files").is_dir())
+            self.assertTrue((Path(directory) / "raw_sources").is_dir())
 
     def test_policy_document_can_use_blob_file_store_without_local_filesystem(self) -> None:
         blob_client = FakeBlobClient()

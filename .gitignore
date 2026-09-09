@@ -6,8 +6,8 @@ coverage/
 *.tsbuildinfo
 __pycache__/
 *.py[cod]
-services/api/data/*.json
-services/api/data/*.tmp
+services/api/data/
+services/api/backups/
 services/api/.venv/
 
 # Next.js 16 generates these workspace hints during dev.

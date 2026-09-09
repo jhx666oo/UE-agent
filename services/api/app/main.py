@@ -7,7 +7,8 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from .api.routes import router
-from .repository import JsonProjectRepository, PostgresProjectRepository, VercelBlobPolicyFileStore
+from .repository import PostgresProjectRepository, ProjectRepository, VercelBlobPolicyFileStore
+from .sqlite_repository import SqliteProjectRepository, default_database_path
 
 
 def default_data_path() -> Path:
@@ -24,14 +25,15 @@ def allowed_origins() -> list[str]:
     return ["http://localhost:3000", "http://127.0.0.1:3000"]
 
 
-def create_repository() -> JsonProjectRepository:
+def create_repository() -> ProjectRepository:
+    """本地默认使用 SQLite；只有显式配置 DATABASE_URL 才走云端文档存储。"""
     database_url = os.getenv("DATABASE_URL")
     if database_url:
         return PostgresProjectRepository(database_url, file_store=VercelBlobPolicyFileStore())
-    return JsonProjectRepository(default_data_path())
+    return SqliteProjectRepository(default_database_path())
 
 
-def create_app(repository: JsonProjectRepository | None = None) -> FastAPI:
+def create_app(repository: ProjectRepository | None = None) -> FastAPI:
     app = FastAPI(title="UE Agent API", version="0.1.0")
     app.state.repository = repository or create_repository()
     app.add_middleware(

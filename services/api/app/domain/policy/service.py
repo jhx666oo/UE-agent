@@ -4,7 +4,7 @@ import hashlib
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
-from ...repository import JsonProjectRepository, new_id, utc_now
+from ...repository import ProjectRepository, new_id, utc_now
 
 
 ALLOWED_EXTENSIONS = {".doc", ".docx", ".xls", ".xlsx", ".pdf"}
@@ -14,7 +14,7 @@ MAX_UPLOAD_BYTES = 20 * 1024 * 1024
 class PolicyService:
     """Local policy workflow; candidate values never become approved implicitly."""
 
-    def __init__(self, repository: JsonProjectRepository):
+    def __init__(self, repository: ProjectRepository):
         self.repository = repository
 
     def upload_document(

@@ -10,7 +10,11 @@
     "test": "pnpm --recursive test",
     "model:test": "PYTHONPATH=services/api python3 -m unittest services/api/tests/test_spec_contract.py services/api/tests/test_stages.py services/api/tests/test_formulas.py services/api/tests/test_engine_baseline.py services/api/tests/test_regressions.py services/api/tests/test_repository.py",
     "api:test": "PYTHONPATH=services/api uv run --project services/api --extra test python -m unittest discover -s services/api/tests -p 'test_*.py'",
-    "api:dev": "PYTHONPATH=services/api uv run --project services/api uvicorn app.main:app --reload --port 8000"
+    "api:dev": "PYTHONPATH=services/api uv run --project services/api uvicorn app.main:app --reload --port 8000",
+    "bootstrap": "PYTHONPATH=services/api uv run --project services/api python services/api/scripts/bootstrap.py",
+    "data:backup": "PYTHONPATH=services/api uv run --project services/api python scripts/backup_data.py",
+    "data:restore": "PYTHONPATH=services/api uv run --project services/api python scripts/restore_data.py",
+    "dev:all": "bash scripts/dev-all.sh"
   },
   "devDependencies": {
     "typescript": "^5.9.3"

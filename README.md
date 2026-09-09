@@ -17,6 +17,8 @@
 
 ## 当前文档
 
+- [UE Agent 产品需求文档（v1.1 Demo 基线）](docs/product/UE-Agent-产品需求文档-v1.0.md)
+- [本地运行与交付](docs/deployment/local.md)
 - [UE Agent 详细开发规范 v0.1](docs/UE-Agent-详细开发规范-v0.1.md)
 - [GitHub 参考项目与技术选型](docs/GitHub-参考项目与技术选型.md)
 - [开发规范总则 v0.2](docs/standards/00-规范总则.md)
@@ -41,44 +43,40 @@
 
 ## 计划中的系统模块
 
-1. 项目管理
-2. U1 单站 UE 测算
-3. 城市与市场资料
-4. 长护险政策中心
-5. 多城市对比
-6. 后台管理
+1. 总览仪表盘（全部城市、单城市、多城市对比）
+2. 城市测算（控制台参数、场景、24 个月测算与结果快照）
+3. 政策资料（官网来源配置、一键抓取、原文留存与参数建议值）
+4. 城市对比（统一口径比较经营指标与数据完整度）
+
+字段与公式不再作为独立管理模块：控制台字段、公式说明和待业务确认问题直接内嵌在城市测算页面。
 
 ## 仓库状态
 
-- 状态：前端基础骨架和 U1 Excel 复刻计算基座已完成
-- 产品与架构文档：v0.1
+- 状态：前端基础骨架和 U1 Excel 复刻计算基座已完成，本地可交付运行模式已切换为 SQLite
+- 产品与架构文档：需求文档 v1.1 Demo 基线已定稿（含 75 字段控制台字典、四类数据源交互、待业务确认清单）
 - 工程与前端规范：v0.2
-- 前端代码：workspace、总览、城市项目、政策资料、参数设置和兼容入口已完成
+- 本地数据：SQLite 仓储 + 初始化/迁移/备份/恢复命令已完成，既有 JSON 数据可一键导入
+- 前端代码：workspace、总览、城市项目、政策资料、参数设置和兼容入口已完成；导航与四类数据源交互正按需求文档改造
 - 计算引擎：Python 纯计算域已接入并通过基准回归
-- 本地 API 与前端：FastAPI、JSON 项目存储、动态参数表单和结果复核已接入
-- 部署环境：未创建
+- 本地 API 与前端：FastAPI、动态参数表单和结果复核已接入
+- 政策资料：当前仍是「本地上传 + 候选字段人工审核」，需求文档要求改为「官网来源配置 + 一键抓取 + 灰色建议值」，尚未改造
+- 部署环境：本地运行为准，云端资源不依赖
 
 ## 本阶段运行方式
 
 ```bash
 pnpm install
+pnpm bootstrap   # 建数据目录与 SQLite 表结构，并在库内无项目时导入既有 projects.json
+pnpm dev:all     # 同时启动 API 与前端，任一进程退出即整体停止
 ```
 
-在两个终端分别执行：
+需要在两个终端分别看日志时执行 `pnpm api:dev` 和 `pnpm dev`。API 默认访问 `http://localhost:8000`，前端默认访问 `http://localhost:3000`。当前可查看 `/`、`/projects`、`/projects/new`、`/policies`、`/settings`。旧入口 `/u1` 和 `/projects/{projectId}/u1` 保留兼容跳转。
 
-```bash
-pnpm api:dev
-```
-
-```bash
-pnpm dev
-```
-
-API 默认访问 `http://localhost:8000`，前端默认访问 `http://localhost:3000`。当前可查看 `/`、`/projects`、`/projects/new`、`/policies`、`/settings`。旧入口 `/u1` 和 `/projects/{projectId}/u1` 保留兼容跳转。
+运行数据全部留在本机 `services/api/data/`（数据库 + `policy_files/` + `raw_sources/`），不入库。备份用 `pnpm data:backup`，恢复用 `pnpm data:restore --from services/api/backups/<时间戳>`，细节见[本地运行与交付](docs/deployment/local.md)。
 
 Dashboard 默认读取 `/api/dashboard/overview`，按城市选择最近一次 `calculated` 或 `confirmed` 快照；参数修改后会标记为 `stale`。政策资料接口支持本地文件元数据、显式候选字段解析和人工通过/驳回，未审核字段不会进入正式政策汇总，也不会覆盖项目输入。
 
-验证 U1 模型：
+验证 U1 模型与后端：
 
 ```bash
 pnpm model:test
