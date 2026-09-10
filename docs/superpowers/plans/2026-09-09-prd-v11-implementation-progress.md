@@ -86,15 +86,29 @@
 ### 错误结构补全（原待办 7，已完成）
 `error_payload` 增加 `requestId`（uuid4）与可选 `field`；查询参数与字段校验错误带上 field，`NOT_FOUND` 不带。
 
-## 待办（剩余，按优先级）
+## M6 接手后续（本轮已完成，均已提交，待推送）
 
-1. **`/settings` 页处理**：PRD 说参数设置不作为主导航；页面保留为字段字典只读参考页没问题，但建议改为从城市测算页可达，或直接下线该路由
-2. **仪表盘筛选进 URL**（PRD 9.2/nuqs）：dashboard-filters 的 scope/cityIds/period 目前不进 URL，「城市对比」导航用 `/?scope=compare`，需要 nuqs 接住并联动。nuqs 在规范白名单内，但属新增依赖，需说明复用判断
-3. **PRD 16.6 城市级字段值接口**：现在是 `/scenarios/{id}/values`（场景级），PRD 写的是 `/cities/{cityId}/values`；若产品确认一座城市一个主对象，可在路由层加别名，不动存储
-4. **ZIP 导出**（PRD 16.7，P1）：原始抓取文件打包导出；CSV/JSON 已可用
-5. **旧测试数据清理**：库里「进程验证项目」「SQLite 重启验证」两个测试项目，以及本轮 E2E 留下的两条来源与抓取记录（PRD 禁止静默删除，需用户确认后再删）
-6. **B12 GR 公关费用**：参数字典标「公式自动」但 Excel E47 是常量 5000，引擎目前当普通必填输入读（engine.py 中 `B12` 仍 required）。需业务确认后决定：改为只读常量公式 + issue 标记，属模型语义变更，勿擅自改（AGENTS.md 门禁）
-7. **提交纪律**：每个里程碑单独 commit + push（push 偶发 Empty reply，重试即可）；测试门禁 = `pnpm model:test` + `pnpm api:test`（uv）+ `apps/web` 下 vitest/tsc/eslint
+本轮完成 4 项待办，2 个提交：`941e181`（后端）、`8d2c196`（前端）。
+门禁：后端 **115 项**、前端 **24 项**、typecheck、eslint、`next build` 全绿。
+
+### ZIP 导出（原待办 4，已完成）
+`GET /api/policies/export?sourceId={id}&format=zip`：打包该来源抓取原文（`raw_sources/<sha>.bin`）+ `manifest.csv`（记录 ID/文件名/SHA256/标题/状态），`Content-Type: application/zip`。缺 `sourceId` 返回 `MISSING_EXPORT_SOURCE`，无原文返回 404。
+
+### 仪表盘筛选进 URL（原待办 2，已完成）
+引入 `nuqs@2.10.1`（规范白名单内，复用判断：URL 状态管理是其文档明确的类别）。根布局挂 `<NuqsAdapter>`；首页改为客户端组件，`scope/cityIds/period/includeStale` 用 `useQueryStates` 读写 URL（PRD 9.2 刷新后保留筛选），首页包 `<Suspense>` 满足 `useSearchParams` 边界。`DashboardOverview` 增加受控 `query` 模式，筛选变化时自动重拉数据（此前生产路径筛选不触发刷新，一并修复）。「城市对比」导航 `/?scope=compare` 现在真正生效。
+
+### 城市级字段值别名（原待办 3，已完成）
+新增 `GET/PATCH /api/cities/{cityId}/values[/{fieldId}]` 与 `accept-suggestion` 别名，把城市解析到「主项目 + 最近更新场景」（与仪表盘聚合器 `_city_id`/`_project_scenario` 一致），复用场景级校验与写值逻辑，不动存储。
+
+### /settings 页（原待办 1，已完成）
+页面保留为只读「字段与公式」字典（模型版本/参数/问题），标题由「参数设置」改为「字段与公式」，并从城市测算列表页头部加「字段与公式」入口（PRD 7.1/7.2）。
+
+### 旧测试数据清理（原待办 5，已完成，用户已授权）
+删除 2 个测试项目（进程验证项目、SQLite 重启验证）及其场景/快照/字段值/历史，删除 2 条 E2E 来源与 4 条抓取记录、2 条 E2E 快照，清理 `raw_sources/` 下 2 个孤儿 `.bin`。删前用 `scripts/backup_data.py` 备份（`services/api/backups/20260910T014006Z`）。剩余 1 项目 3 场景 3 快照，外键检查通过。
+
+## 待办（剩余，仅 1 项）
+
+1. **B12 GR 公关费用**：参数字典标「公式自动」但 Excel E47 是常量 5000，引擎目前当普通必填输入读（engine.py 中 `B12` 仍 required）。需业务确认后决定：改为只读常量公式 + issue 标记，属模型语义变更，勿擅自改（AGENTS.md 门禁）
 
 ## 验证命令速查
 
