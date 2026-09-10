@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { IconFolderPlus } from "@tabler/icons-react";
+import { IconFileDescription, IconFolderPlus } from "@tabler/icons-react";
 import { Badge } from "@ue-agent/ui/components/badge";
 import { Button } from "@ue-agent/ui/components/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@ue-agent/ui/components/card";
@@ -41,12 +41,20 @@ export default function ProjectsPage() {
         title="项目"
         description="每个城市测算对象都记录范围、场景、模型版本和复核状态。"
         actions={
-          <Button asChild>
-            <Link href="/projects/new">
-              <IconFolderPlus size={16} stroke={1.8} />
-              新增城市
-            </Link>
-          </Button>
+          <>
+            <Button asChild variant="outline">
+              <Link href="/settings">
+                <IconFileDescription size={16} stroke={1.8} />
+                字段与公式
+              </Link>
+            </Button>
+            <Button asChild>
+              <Link href="/projects/new">
+                <IconFolderPlus size={16} stroke={1.8} />
+                新增城市
+              </Link>
+            </Button>
+          </>
         }
       />
       {loading ? (

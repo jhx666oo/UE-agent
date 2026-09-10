@@ -1,7 +1,7 @@
 {
   "name": "ue-agent",
   "private": true,
-  "packageManager": "pnpm@10.13.1",
+  "packageManager": "pnpm@11.14.0",
   "scripts": {
     "dev": "pnpm --filter @ue-agent/web dev",
     "build": "pnpm --filter @ue-agent/web build",

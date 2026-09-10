@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { IconRefresh } from "@tabler/icons-react";
 import { Button } from "@ue-agent/ui/components/button";
 import { Card, CardContent } from "@ue-agent/ui/components/card";
@@ -19,25 +19,32 @@ const DEFAULT_QUERY: DashboardQuery = { scope: "global", cityIds: [], period: 12
 export function DashboardOverview({
   initialData,
   initialQuery = DEFAULT_QUERY,
+  query: controlledQuery,
   onQueryChange,
   loadData,
 }: Readonly<{
   initialData?: DashboardOverviewResponse;
   initialQuery?: DashboardQuery;
+  /** 受控模式：由父组件（如 nuqs URL 状态）驱动当前筛选条件。 */
+  query?: DashboardQuery;
   onQueryChange?: (query: DashboardQuery) => void;
   loadData?: (query: DashboardQuery) => Promise<DashboardOverviewResponse>;
 }>) {
-  const [query, setQuery] = useState(initialQuery);
+  const isControlled = controlledQuery !== undefined;
+  const [internalQuery, setInternalQuery] = useState(initialQuery);
+  const query = isControlled ? controlledQuery : internalQuery;
   const [data, setData] = useState<DashboardOverviewResponse | undefined>(initialData);
   const [loading, setLoading] = useState(!initialData);
   const [error, setError] = useState<string | null>(null);
   const cities = useMemo(() => data?.cities ?? [], [data?.cities]);
 
-  async function refresh(nextQuery = query) {
+  const fetcher = loadData ?? getDashboardOverview;
+
+  async function refresh(nextQuery: DashboardQuery = query) {
     setLoading(true);
     setError(null);
     try {
-      const nextData = await (loadData ?? getDashboardOverview)(nextQuery);
+      const nextData = await fetcher(nextQuery);
       setData(nextData);
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : "总览数据加载失败");
@@ -46,18 +53,35 @@ export function DashboardOverview({
     }
   }
 
+  // 首次加载：没有预取数据时，用当前筛选条件拉取一次。
   useEffect(() => {
     if (initialData) return;
     let active = true;
-    getDashboardOverview(initialQuery)
+    fetcher(query)
       .then((nextData) => { if (active) setData(nextData); })
       .catch((requestError) => { if (active) setError(requestError instanceof Error ? requestError.message : "总览数据加载失败"); })
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
-  }, [initialData, initialQuery]);
+    // 仅在挂载时执行一次；query 变化由 changeQuery / 受控 effect 驱动。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialData]);
+
+  // 受控模式：URL 中的筛选条件变化时重新拉取（PRD 9.2 刷新后保留筛选）。
+  const lastQueryRef = useRef<DashboardQuery | null>(isControlled ? null : query);
+  useEffect(() => {
+    if (!isControlled) return;
+    if (lastQueryRef.current === null) {
+      lastQueryRef.current = query;
+      return; // 挂载那次已由上方 effect 拉取
+    }
+    if (lastQueryRef.current === query) return;
+    lastQueryRef.current = query;
+    void refresh(query);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [query, isControlled]);
 
   function changeQuery(nextQuery: DashboardQuery) {
-    setQuery(nextQuery);
+    if (!isControlled) setInternalQuery(nextQuery);
     onQueryChange?.(nextQuery);
     if (loadData) void refresh(nextQuery);
   }
