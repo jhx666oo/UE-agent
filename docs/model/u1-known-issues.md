@@ -33,6 +33,29 @@
 - **疑点**：如果业务要的是第 24 个月累计净利润，通常应直接取 `Y32`；但当前版本不替换 Excel 逻辑。
 - **本版本处理**：headline 指标继续复刻 `SUM(B32:Y32)`，同时在问题列表中标记待业务确认。
 
+## 核心指标卡口径（2026-09-10 对齐）
+
+Excel「核心指标卡」共 10 项，后端 `headline_metrics` 实现如下（数值以基准输入复核）：
+
+| Excel 指标 | 单位 | headline_metrics key | 口径 |
+|---|---|---|---|
+| 投资回收期 | 月 | `payback_month` | 累计现金流首次回正的月份 |
+| 启动期累计最大亏损 | 元 | `startup_max_cash_deficit` | 筹备期 + 启动期累计现金流最低点 |
+| 平台期月均净利润 | 元/月 | `platform_monthly_net_profit` | 平台期净利润均值 |
+| 平台期月均净利率 | % | `platform_net_margin` | 平台期总净利 / 总收入 |
+| 24个月累计净利润 | 元 | `twenty_four_month_cumulative_net_profit` | `SUM(累计净利润)`，复刻 `SUM(B32:Y32)` |
+| 盈亏平衡月份 | 月 | `net_break_even_month` | 累计净利润首次为正的月份 |
+| 平台期盈亏平衡客户数 | 人 | `break_even_customers` | 平台期固定成本 / 单客户贡献 |
+| 筹备期总投入 | 元 | `initial_investment` | 控制台 B16 |
+| 启动期总亏损 | 元 | `startup_total_loss` | 启动期净利润累计值 |
+| 平台期月均收入 | 元/月 | `platform_monthly_revenue` | 平台期总收入均值 |
+
+说明：
+
+- `startup_max_cash_deficit` 与 `max_cash_deficit` 在基准输入下同为 `-501000`（第 1 个月筹备期的现金流最低点），符合 Excel 指标卡两处显示相同数值的现象。
+- `net_break_even_month`（净利润口径）与 `payback_month`（现金流口径）语义不同，Excel 说明分别为「累计净利润首次为正」与「累计现金流回正」，不可混用。
+- `startup_total_loss` 在 S5 公式疑点未修正前会呈现为大额正数（虚假盈利），与 Excel 中该格标红表达亏损意图不符，根因是 `控制台!E32` 的量纲问题，见上节。
+
 ## 数量级异常
 
 基准输入会产生非常大的站点客户数和收入结果。这一版本不通过四舍五入、限幅、`IFERROR` 或隐式单位换算改变结果；后续业务评审需确认城市总量、区域总量、站点覆盖范围和目标市场覆盖率的边界关系。

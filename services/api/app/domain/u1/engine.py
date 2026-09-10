@@ -308,16 +308,42 @@ def calculate_u1(values: Mapping[str, Any], model_version: str = DEFAULT_MODEL_V
     payback_months = [month.cash_flow_positive_month.value for month in month_tuple if month.cash_flow_positive_month.value is not None]
     break_even_values = [month.break_even_customers.value for month in month_tuple if month.break_even_customers.value is not None]
     platform = stage_summary[PLATFORM]
+
+    # 启动期阶段切片：核心指标卡需要独立于全周期的启动期口径。
+    startup_months = [month for month in month_tuple if month.stage == STARTUP]
+    # 启动期累计最大亏损：Excel 指标卡“启动期现金流最差时的窟窿”。
+    # 口径为筹备期 + 启动期的累计现金流最低点（投入期尚未产生收入，最低点即最大窟窿），
+    # 与全阶段 max_cash_deficit 在正常参数下应一致；分阶段取值可避免平台期转正后掩盖该值。
+    startup_phase_months = [
+        month for month in month_tuple if month.stage in (PREPARATION, STARTUP)
+    ]
+    startup_max_cash_deficit = (
+        min(float(month.cumulative_cash_flow.value) for month in startup_phase_months)
+        if startup_phase_months
+        else None
+    )
+    # 启动期总亏损：启动期内净利润的累计值（Excel 指标卡“爬坡期累计亏掉的钱”）。
+    startup_total_loss = (
+        sum(float(month.net_profit.value) for month in startup_months) if startup_months else None
+    )
+    # 盈亏平衡月份：累计净利润首次转正的月份（与 payback_month 的现金流口径区分）。
+    net_positive_months = [
+        month.month for month in month_tuple if float(month.cumulative_net_profit.value) > 0
+    ]
+
     headline_metrics = {
         "payback_month": formula_value(max(payback_months) if payback_months else None),
         "max_cash_deficit": formula_value(min(float(month.cumulative_cash_flow.value) for month in month_tuple)),
+        "startup_max_cash_deficit": formula_value(startup_max_cash_deficit),
         "platform_monthly_net_profit": formula_value(platform["average_net_profit"]),
         "platform_net_margin": platform["net_margin"],
         "twenty_four_month_cumulative_net_profit": formula_value(
             sum(float(month.cumulative_net_profit.value) for month in month_tuple)
         ),
+        "net_break_even_month": formula_value(min(net_positive_months) if net_positive_months else None),
         "break_even_customers": formula_value(max(break_even_values) if break_even_values else None),
         "initial_investment": formula_value(derived["B16"]),
+        "startup_total_loss": formula_value(startup_total_loss),
         "platform_monthly_revenue": formula_value(platform["average_revenue"]),
     }
 
