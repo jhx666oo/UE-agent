@@ -394,7 +394,7 @@
       "stage": "P0",
       "sourceType": "公式自动",
       "required": false,
-      "parityStatus": "needs_business_confirmation",
+      "parityStatus": "corrected_by_business_decision",
       "block": "站点空间",
       "blockOrder": 3
     },
@@ -422,7 +422,7 @@
       "stage": "P0",
       "sourceType": "公式自动",
       "required": false,
-      "parityStatus": "needs_business_confirmation",
+      "parityStatus": "corrected_by_business_decision",
       "block": "站点空间",
       "blockOrder": 3
     },

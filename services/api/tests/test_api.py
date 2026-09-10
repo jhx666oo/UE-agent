@@ -117,6 +117,18 @@ class U1ApiTests(unittest.TestCase):
         self.assertEqual(result.status_code, 422)
         self.assertIn("MISSING_REQUIRED_INPUT", {issue["code"] for issue in result.json()["issues"]})
 
+    def test_non_positive_commute_speed_returns_invalid_input_not_server_error(self):
+        """S2（通勤时速）为 0 时 S3 会除以零，接口必须返回 422 INVALID_INPUT 而不是 500。"""
+        project = self.client.post("/api/projects", json={"name": "通勤时速测试", "city": "长沙"}).json()
+        scenario = self.client.post(
+            f"/api/projects/{project['id']}/scenarios",
+            json={"name": "S2=0", "inputs": {"S2": 0}},
+        ).json()
+        result = self.client.post(f"/api/projects/{project['id']}/scenarios/{scenario['id']}/calculate")
+        self.assertEqual(result.status_code, 422)
+        self.assertEqual(result.json()["error"]["code"], "INVALID_INPUT")
+        self.assertTrue(result.json()["error"]["requestId"])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -881,7 +881,14 @@ def calculate_scenario(project_id: str, scenario_id: str, request: Request) -> R
     except KeyError:
         return error_payload("NOT_FOUND", f"Scenario not found: {scenario_id}")
 
-    result = calculate_u1(scenario["inputs"])
+    try:
+        result = calculate_u1(scenario["inputs"])
+    except ValueError as error:
+        # 输入本身不合法（如通勤时速为 0），返回 422 而不是 500。
+        return JSONResponse(
+            status_code=422,
+            content={"error": {"code": "INVALID_INPUT", "message": str(error), "requestId": uuid.uuid4().hex}},
+        )
     serialized = result_to_dict(result)
     repository.save_calculation(project_id, scenario_id, serialized)
     if result.status == "blocked":

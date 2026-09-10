@@ -39,6 +39,7 @@ REQUIRED_DRIVERS = (
     "P5",
     "P8",
     "S1",
+    "S2",
     "S4",
     "S6",
     "S7",
@@ -277,7 +278,7 @@ def calculate_u1(values: Mapping[str, Any], model_version: str = DEFAULT_MODEL_V
     derived = {
         "C9": population_density(resolved),
         "P3": personal_payment_ratio(resolved),
-        "S3": station_daily_caregiver_hours({**resolved, "C9": population_density(resolved)}),
+        "S3": station_daily_caregiver_hours(resolved),
         "S5": station_coverage_disabled_limit({**resolved, "C9": population_density(resolved)}),
         "B16": initial_investment(resolved),
     }

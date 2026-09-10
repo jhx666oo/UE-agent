@@ -2,7 +2,7 @@
   "modelVersion": "u1-excel-v2.1-parity",
   "issues": [
     {"code":"SUSPECTED_CELL_REFERENCE","excelCell":"控制台!E32","severity":"info","status":"resolved_by_business_decision","message":"站点覆盖失能客户上限（E32）原公式末项误用 E12（区域人口密度），量纲失配使结果虚高约 32 万倍。业务方 2026-09-10 确认末项改为 C8（80岁以上失能率），本版本已按此修正。"},
-    {"code":"SHARED_FORMULA_STRUCTURE","excelCell":"控制台!E30,E32","severity":"warning","status":"needs_business_confirmation","message":"S3（护理员日工作时段，单位：小时）与 S5（站点覆盖失能客户上限，单位：人）修正后共用同一公式结构，基准输入下两者同为 689.89 但单位不同。两字段是否确应采用同一算式仍需业务方复核。"},
+    {"code":"SHARED_FORMULA_STRUCTURE","excelCell":"控制台!E30","severity":"info","status":"resolved_by_business_decision","message":"S3（护理员日工作时段）原误与 S5 共用「面积×人口密度×年龄段加权失能率」结构，得出 689.89（单位却为小时），量纲失配。业务方 2026-09-10 确认 S3 正确公式为「日工作总时段 10 小时 − 往返通勤小时」= 10-S1/S2*2，S5 公式本身无误。本版本已修正 S3，两字段不再共用公式。"},
     {"code":"DIV0_IN_SUMMARY","excelCell":"阶段汇总表!B12","severity":"warning","status":"needs_business_confirmation","message":"筹备期累计收入为零时，筹备期净利率按 Excel 原公式返回 DIV0。"},
     {"code":"CUMULATIVE_SERIES_SUM","excelCell":"核心指标卡!C9","severity":"warning","status":"needs_business_confirmation","message":"24个月累计净利润引用 AB32，而 AB32 是累计净利润序列的求和，第一版保持 Excel 原逻辑。"}
   ]

@@ -3,8 +3,8 @@
   "formulas": [
     {"id":"city.population_density","excelCell":"控制台!E12","outputKey":"C9","excelFormula":"E6*10000/E16","parityStatus":"parity"},
     {"id":"policy.personal_payment_ratio","excelCell":"控制台!E19","outputKey":"P3","excelFormula":"1-E18","parityStatus":"parity"},
-    {"id":"station.caregiver_daily_hours","excelCell":"控制台!E30","outputKey":"S3","excelFormula":"PI()*E28^2*E12*E7*(E9*0.6+E10*0.3+E11*0.1)","parityStatus":"needs_business_confirmation"},
-    {"id":"station.coverage_disabled_customer_limit","excelCell":"控制台!E32","outputKey":"S5","excelFormula":"PI()*E28^2*E12*E7*(E9*0.6+E10*0.3+E12*0.1)","parityStatus":"needs_business_confirmation"},
+    {"id":"station.caregiver_daily_hours","excelCell":"控制台!E30","outputKey":"S3","excelFormula":"10-S1/S2*2","parityStatus":"corrected_by_business_decision"},
+    {"id":"station.coverage_disabled_customer_limit","excelCell":"控制台!E32","outputKey":"S5","excelFormula":"PI()*E28^2*E12*E7*(E9*0.6+E10*0.3+E11*0.1)","parityStatus":"corrected_by_business_decision"},
     {"id":"investment.initial_total","excelCell":"控制台!E51","outputKey":"B16","excelFormula":"E49+E50+(E41*E42+E36*E20+E43+E44+E45+E46)*3","parityStatus":"parity"},
     {"id":"monthly.stage","excelCell":"月度投影表!B3:Y3","outputKey":"stage","excelFormula":"IF(month<=D1,筹备期,IF(month<=D1+D2,启动期,平台期))","parityStatus":"parity"},
     {"id":"monthly.signed_customers","excelCell":"月度投影表!B5:Y5","outputKey":"signed_customers","excelFormula":"IF(stage=筹备期,0,IF(stage=启动期,MIN(S5*S8*(month-D1)/D2,S5*S8),S5*S8))","parityStatus":"parity"},

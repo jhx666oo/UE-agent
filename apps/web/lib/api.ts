@@ -16,7 +16,7 @@ export type ParameterDefinition = {
   stage: string;
   sourceType: string;
   required: boolean;
-  parityStatus: "parity" | "needs_business_confirmation";
+  parityStatus: "parity" | "needs_business_confirmation" | "corrected_by_business_decision";
   block: string;
   blockOrder: number;
   options?: string[] | null;

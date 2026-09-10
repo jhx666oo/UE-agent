@@ -59,6 +59,17 @@ class BaselineRegressionTests(unittest.TestCase):
         self.assertAlmostEqual(platform_customers, 344.9468733641594, places=6)
         self.assertLess(platform_customers, 1000)  # 单站点覆盖客户数不应超过千人量级
 
+    def test_s3_uses_commute_deduction_not_the_population_capacity_formula(self):
+        """S3（护理员日工作时段）应为「10 小时 − 往返通勤」，不再与 S5 共用公式。
+
+        基准输入 S1=3、S2=20 → S3 = 10 - 3/20*2 = 9.7 小时。
+        原实现误与 S5 同构算出 689.89，单位是小时，量纲失配。
+        """
+        self.assertAlmostEqual(self.result.parameters["S3"], 9.7, places=9)
+        self.assertAlmostEqual(self.result.parameters["S5"], 689.8937467283188, places=6)
+        # 两字段不再同值，确认 S3/S5 共用公式疑点已消除
+        self.assertNotAlmostEqual(self.result.parameters["S3"], self.result.parameters["S5"], places=3)
+
 
 if __name__ == "__main__":
     unittest.main()
