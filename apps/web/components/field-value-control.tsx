@@ -61,6 +61,7 @@ export function FieldValueControl({
       <Input
         id={`field-${field.fieldId}`}
         value={formulaValue ?? formatValue(field.currentValue) ?? ""}
+        placeholder={formulaValue === undefined && field.currentValue === null ? "运行测算后自动生成" : ""}
         readOnly
         className="border-success-subtle bg-success-subtle/40 text-foreground"
         aria-readonly="true"
@@ -160,6 +161,7 @@ export function FieldValueControl({
       ) : null}
       <p className="text-xs text-muted-foreground">
         {field.unit === "-" ? "" : `${field.unit} · `}{field.sourceType}
+        {isFormula && formulaValue === undefined ? " · 待测算" : ""}
       </p>
     </div>
   );
