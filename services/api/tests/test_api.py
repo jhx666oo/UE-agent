@@ -67,7 +67,12 @@ class U1ApiTests(unittest.TestCase):
         self.assertEqual(calculation.json()["headlineMetrics"]["payback_month"]["value"], 24)
         self.assertEqual(
             {issue["code"] for issue in calculation.json()["issues"]},
-            {"SUSPECTED_CELL_REFERENCE", "DIV0_IN_SUMMARY", "CUMULATIVE_SERIES_SUM"},
+            {
+                "SUSPECTED_CELL_REFERENCE",
+                "SHARED_FORMULA_STRUCTURE",
+                "DIV0_IN_SUMMARY",
+                "CUMULATIVE_SERIES_SUM",
+            },
         )
 
         reloaded = self.client.get(f"/api/projects/{project_id}/scenarios/{scenario_id}")

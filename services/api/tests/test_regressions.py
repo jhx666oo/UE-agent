@@ -12,12 +12,12 @@ class BaselineRegressionTests(unittest.TestCase):
     def test_headline_metrics_match_selected_workbook_cache(self):
         metrics = self.result.headline_metrics
         self.assertEqual(metrics["payback_month"].value, 24)
-        self.assertAlmostEqual(metrics["max_cash_deficit"].value, -501000, places=6)
-        self.assertAlmostEqual(metrics["platform_monthly_net_profit"].value, 220138554186.338, delta=1e-3)
-        self.assertAlmostEqual(metrics["platform_net_margin"].value, 0.998178803388089, places=12)
+        self.assertAlmostEqual(metrics["max_cash_deficit"].value, -556639.6098248562, places=6)
+        self.assertAlmostEqual(metrics["platform_monthly_net_profit"].value, 516361.56244001834, delta=1e-6)
+        self.assertAlmostEqual(metrics["platform_net_margin"].value, 0.7676567660079704, places=12)
         self.assertAlmostEqual(
             metrics["twenty_four_month_cumulative_net_profit"].value,
-            48161870185060.4,
+            102744139.8594375,
             delta=0.1,
         )
         self.assertEqual(metrics["break_even_customers"].value, 23)
@@ -28,7 +28,12 @@ class BaselineRegressionTests(unittest.TestCase):
         self.assertEqual(self.result.stage_summary["筹备期"]["net_margin"].error_code, "DIV0")
         self.assertEqual(
             {issue.code for issue in self.result.issues},
-            {"SUSPECTED_CELL_REFERENCE", "DIV0_IN_SUMMARY", "CUMULATIVE_SERIES_SUM"},
+            {
+                "SUSPECTED_CELL_REFERENCE",
+                "SHARED_FORMULA_STRUCTURE",
+                "DIV0_IN_SUMMARY",
+                "CUMULATIVE_SERIES_SUM",
+            },
         )
 
     def test_selected_months_match_workbook_cache(self):
@@ -39,10 +44,20 @@ class BaselineRegressionTests(unittest.TestCase):
             self.result.months[23],
         )
         self.assertAlmostEqual(month_one.cumulative_cash_flow.value, -501000, places=6)
-        self.assertAlmostEqual(month_two.signed_customers.value, 18849589.8507394, places=6)
-        self.assertAlmostEqual(month_eight.net_profit.value, 220138554186.338, delta=1e-3)
+        self.assertAlmostEqual(month_two.signed_customers.value, 57.491145560693234, places=6)
+        self.assertAlmostEqual(month_eight.net_profit.value, 516361.5624400183, delta=1e-6)
         self.assertEqual(month_twenty_four.cash_flow_positive_month.value, 24)
         self.assertEqual(month_twenty_four.break_even_customers.value, 23)
+
+    def test_station_coverage_limit_uses_c8_and_stays_in_a_sane_order_of_magnitude(self):
+        """S5 末项必须用 C8（80岁以上失能率），而不是原 Excel 误抄的 C9（人口密度）。
+
+        修正前 S5 约 2.26 亿，站点覆盖客户 1.13 亿人、平台期月收入 2205 亿元，
+        属量纲失配造成的数量级错误；修正后单站点覆盖客户应落在数百人量级。
+        """
+        platform_customers = self.result.months[23].signed_customers.value
+        self.assertAlmostEqual(platform_customers, 344.9468733641594, places=6)
+        self.assertLess(platform_customers, 1000)  # 单站点覆盖客户数不应超过千人量级
 
 
 if __name__ == "__main__":

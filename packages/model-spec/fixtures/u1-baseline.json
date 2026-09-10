@@ -75,22 +75,61 @@
   "cached": {
     "headlineMetrics": {
       "payback_month": 24,
-      "max_cash_deficit": -501000,
-      "platform_monthly_net_profit": 220138554186.338,
-      "platform_net_margin": 0.998178803388089,
-      "twenty_four_month_cumulative_net_profit": 48161870185060.4,
+      "max_cash_deficit": -556639.6098248562,
+      "startup_max_cash_deficit": -556639.6098248562,
+      "platform_monthly_net_profit": 516361.56244001834,
+      "platform_net_margin": 0.7676567660079704,
+      "twenty_four_month_cumulative_net_profit": 102744139.8594375,
+      "net_break_even_month": 4,
       "break_even_customers": 23,
-      "initial_investment": 459000,
-      "platform_monthly_revenue": 220540201253.651
+      "initial_investment": 459000.0,
+      "startup_total_loss": 1310278.34870114,
+      "platform_monthly_revenue": 672646.4030601108
     },
     "stageSummary": {
       "preparation_net_margin": "#DIV/0!"
     },
     "monthlySamples": {
-      "month1": {"stage":"筹备期","signed_customers":0,"single_customer_month_revenue":0,"net_profit":-48250,"cumulative_net_profit":-48250,"cumulative_cash_flow":-501000,"payback_month":null,"break_even_customers":null},
-      "month2": {"stage":"启动期","signed_customers":18849589.8507394,"single_customer_month_revenue":1950,"net_profit":31091390503.72,"cumulative_net_profit":31091342253.72,"cumulative_cash_flow":31090895753.72,"payback_month":2,"break_even_customers":null},
-      "month8": {"stage":"平台期","signed_customers":113097539.104437,"single_customer_month_revenue":1950,"net_profit":220138554186.338,"cumulative_net_profit":957881582492.786,"cumulative_cash_flow":957881173492.786,"payback_month":8,"break_even_customers":23},
-      "month24": {"stage":"平台期","signed_customers":113097539.104437,"single_customer_month_revenue":1950,"net_profit":220138554186.338,"cumulative_net_profit":4480098449474.19,"cumulative_cash_flow":4480098140474.19,"payback_month":24,"break_even_customers":23}
+      "month1": {
+        "stage": "筹备期",
+        "signed_customers": 0.0,
+        "single_customer_month_revenue": 0.0,
+        "net_profit": -48250.0,
+        "cumulative_net_profit": -48250.0,
+        "cumulative_cash_flow": -501000.0,
+        "payback_month": null,
+        "break_even_customers": null
+      },
+      "month2": {
+        "stage": "启动期",
+        "signed_customers": 57.491145560693234,
+        "single_customer_month_revenue": 1950.0,
+        "net_profit": -61889.60982485616,
+        "cumulative_net_profit": -110139.60982485616,
+        "cumulative_cash_flow": -556639.6098248562,
+        "payback_month": null,
+        "break_even_customers": null
+      },
+      "month8": {
+        "stage": "平台期",
+        "signed_customers": 344.9468733641594,
+        "single_customer_month_revenue": 1950.0,
+        "net_profit": 516361.5624400183,
+        "cumulative_net_profit": 1778389.911141158,
+        "cumulative_cash_flow": 1369389.911141158,
+        "payback_month": 8,
+        "break_even_customers": 23
+      },
+      "month24": {
+        "stage": "平台期",
+        "signed_customers": 344.9468733641594,
+        "single_customer_month_revenue": 1950.0,
+        "net_profit": 516361.5624400183,
+        "cumulative_net_profit": 10040174.910181452,
+        "cumulative_cash_flow": 9731174.910181452,
+        "payback_month": 24,
+        "break_even_customers": 23
+      }
     }
   }
 }

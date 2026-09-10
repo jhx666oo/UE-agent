@@ -46,7 +46,19 @@ def station_daily_caregiver_hours(values: Mapping[str, Any]) -> float:
 
 
 def station_coverage_disabled_limit(values: Mapping[str, Any]) -> float:
-    # Deliberately preserves 控制台!E32's final E12 reference.
+    """站点覆盖失能客户上限（控制台!E32）。
+
+    末项使用 C8（80 岁以上失能率），与 S3 的年龄段加权结构保持一致。
+
+    原 Excel 该单元格最后一项写成 E12（区域人口密度），把「人/km²」当成
+    「失能率」参与三年龄段加权，量纲失配导致结果虚高约 32 万倍
+    （基准输入下 2.26 亿人，站点覆盖客户 1.13 亿，平台期月收入 2205 亿元）。
+    业务方 2026-09-10 确认改为 C8。
+
+    遗留疑点：改用 C8 后 S5 与 S3 数值相同（689.89），但两者单位不同
+    （S5 为人、S3 为小时），字段语义是否应共用同一公式结构仍需业务方复核，
+    见 docs/model/u1-known-issues.md。
+    """
     return (
         math.pi
         * float(values["S1"]) ** 2
@@ -55,7 +67,7 @@ def station_coverage_disabled_limit(values: Mapping[str, Any]) -> float:
         * (
             float(values["C6"]) * 0.6
             + float(values["C7"]) * 0.3
-            + float(values["C9"]) * 0.1
+            + float(values["C8"]) * 0.1
         )
     )
 

@@ -85,10 +85,21 @@ class BaselineEngineTests(unittest.TestCase):
         self.assertEqual(set(result.headline_metrics), expected_keys)
 
     def test_startup_max_cash_deficit_uses_the_investment_phase_trough(self):
-        """启动期累计最大亏损取筹备期+启动期的现金流最低点，基准下应与 -501000 一致。"""
+        """启动期累计最大亏损取筹备期+启动期的现金流最低点。
+
+        S5 修正后收入回归真实规模，第 2 个月转为净亏，现金流最低点从筹备期的
+        -501000 下探到 -556639.61，两者不再相等属预期。
+        """
         result = calculate_u1(load_baseline_inputs())
-        self.assertAlmostEqual(result.headline_metrics["startup_max_cash_deficit"].value, -501000.0, places=6)
+        self.assertAlmostEqual(
+            result.headline_metrics["startup_max_cash_deficit"].value,
+            -556639.6098248562,
+            places=6,
+        )
         self.assertAlmostEqual(result.headline_metrics["initial_investment"].value, 459000.0, places=6)
+        self.assertAlmostEqual(
+            result.months[0].cumulative_cash_flow.value, -501000.0, places=6
+        )
 
     def test_net_break_even_month_differs_from_cash_payback_month(self):
         """盈亏平衡月份（净利润口径）与投资回收期（现金流口径）是两件事，不可混用。"""
