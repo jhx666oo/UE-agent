@@ -83,6 +83,23 @@ export type PolicyOverviewResponse = {
   alerts: PolicyAlert[];
 };
 
+export type PolicyFact = {
+  id: string;
+  cityId: string;
+  documentId: string | null;
+  fieldId: string | null;
+  fieldName?: string | null;
+  value?: number | string | null;
+  quote?: string | null;
+  source?: string | null;
+  effectiveDate?: string | null;
+  status: "candidate" | "approved" | "rejected";
+  reviewer?: string | null;
+  reviewedAt?: string | null;
+  createdAt?: string;
+  updatedAt?: string;
+};
+
 export type PolicyCityDetailResponse = {
   cityId: string;
   cityName: string;
@@ -93,6 +110,62 @@ export type PolicyCityDetailResponse = {
   pendingReviewCount: number;
   projects: Array<{ id: string; name: string }>;
 };
+
+export type CityPolicyExtract = {
+  cityId: string;
+  cityName: string;
+  hasData: boolean;
+  documentCount: number;
+  sourceCount: number;
+  activeSourceCount: number;
+  latestFetchedAt: string | null;
+  latestUpdatedAt: string | null;
+  pendingReviewCount: number;
+  approvedFactCount: number;
+  pendingFacts: PolicyFact[];
+  approvedFacts: PolicyFact[];
+  href: string;
+};
+
+const FACT_STATUS_LABELS: Record<PolicyFact["status"], string> = {
+  candidate: "待审核",
+  approved: "已采用",
+  rejected: "已驳回",
+};
+
+export function factStatusLabel(status: string): string {
+  return FACT_STATUS_LABELS[status as PolicyFact["status"]] ?? status;
+}
+
+/** 把单城市政策详情压成总览页「政策信息提炼区」需要的摘要。 */
+export function buildCityPolicyExtract(detail: PolicyCityDetailResponse): CityPolicyExtract {
+  const facts = (detail.facts as PolicyFact[]).filter((fact) => fact && typeof fact === "object");
+  const activeSources = detail.dataSources.filter((source) => source.status === "active");
+  const fetchedTimes = detail.dataSources
+    .map((source) => source.lastFetchedAt)
+    .filter((value): value is string => Boolean(value))
+    .concat(detail.documents.map((document) => document.updatedAt).filter(Boolean));
+  const updatedTimes = [
+    ...detail.dataSources.map((source) => source.updatedAt),
+    ...detail.documents.map((document) => document.updatedAt),
+    ...facts.map((fact) => fact.updatedAt ?? fact.createdAt ?? ""),
+  ].filter((value): value is string => Boolean(value));
+  return {
+    cityId: detail.cityId,
+    cityName: detail.cityName,
+    hasData: detail.dataSources.length > 0 || detail.documents.length > 0 || facts.length > 0,
+    documentCount: detail.documents.length,
+    sourceCount: detail.dataSources.length,
+    activeSourceCount: activeSources.length,
+    latestFetchedAt: fetchedTimes.length ? fetchedTimes.sort().at(-1)! : null,
+    latestUpdatedAt: updatedTimes.length ? updatedTimes.sort().at(-1)! : null,
+    pendingReviewCount: facts.filter((fact) => fact.status === "candidate").length,
+    approvedFactCount: facts.filter((fact) => fact.status === "approved").length,
+    pendingFacts: facts.filter((fact) => fact.status === "candidate"),
+    approvedFacts: facts.filter((fact) => fact.status === "approved"),
+    href: `/policies/${encodeURIComponent(detail.cityId)}`,
+  };
+}
 
 export type DataSourceInput = {
   cityId: string;

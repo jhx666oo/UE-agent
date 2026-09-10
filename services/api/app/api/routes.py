@@ -612,6 +612,16 @@ def get_project(project_id: str, request: Request) -> dict[str, Any]:
         return error_payload("NOT_FOUND", f"Project not found: {project_id}")
 
 
+@router.delete("/projects/{project_id}", response_model=None)
+def delete_project(project_id: str, request: Request) -> dict[str, Any] | JSONResponse:
+    """删除城市测算项目并级联清理场景数据；政策来源/抓取记录按城市保留（用户已确认）。"""
+    try:
+        repository_from_request(request).delete_project(project_id)
+    except KeyError:
+        return error_payload("NOT_FOUND", f"Project not found: {project_id}")
+    return {"deleted": True, "projectId": project_id}
+
+
 @router.post("/projects/{project_id}/scenarios", status_code=201)
 def create_scenario(project_id: str, payload: ScenarioCreate, request: Request) -> dict[str, Any]:
     repository = repository_from_request(request)

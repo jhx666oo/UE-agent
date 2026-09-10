@@ -65,6 +65,8 @@ class ProjectRepository(Protocol):
 
     def create_project(self, data: Mapping[str, Any]) -> dict[str, Any]: ...
 
+    def delete_project(self, project_id: str) -> None: ...
+
     def create_scenario(self, project_id: str, data: Mapping[str, Any]) -> dict[str, Any]: ...
 
     def get_scenario(self, project_id: str, scenario_id: str) -> dict[str, Any]: ...
@@ -297,6 +299,22 @@ class JsonProjectRepository:
         payload["projects"].append(project)
         self._write(payload)
         return copy.deepcopy(project)
+
+    def delete_project(self, project_id: str) -> None:
+        payload = self._read()
+        project = self._get_project_ref(payload, project_id)
+        scenario_ids = {scenario.get("id") for scenario in project.get("scenarios", [])}
+        payload["projects"] = [item for item in payload["projects"] if item.get("id") != project_id]
+        payload["calculationSnapshots"] = [
+            item for item in payload["calculationSnapshots"] if item.get("projectId") != project_id
+        ]
+        payload["fieldValues"] = [
+            item for item in payload["fieldValues"] if item.get("scenarioId") not in scenario_ids
+        ]
+        payload["fieldValueHistory"] = [
+            item for item in payload["fieldValueHistory"] if item.get("scenarioId") not in scenario_ids
+        ]
+        self._write(payload)
 
     def create_scenario(self, project_id: str, data: Mapping[str, Any]) -> dict[str, Any]:
         payload = self._read()

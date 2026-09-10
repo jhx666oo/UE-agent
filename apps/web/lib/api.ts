@@ -195,6 +195,19 @@ export function getProject(projectId: string) {
   return apiFetch<ProjectRecord>(`/api/projects/${projectId}`);
 }
 
+export type DeleteProjectResponse = {
+  deleted: boolean;
+  projectId: string;
+};
+
+export function deleteProject(projectId: string) {
+  return apiFetch<DeleteProjectResponse>(`/api/projects/${encodeURIComponent(projectId)}`, { method: "DELETE" });
+}
+
+export function listScenarioSnapshotsForProject(projectId: string) {
+  return apiFetch<CalculationSnapshot[]>(`/api/projects/${encodeURIComponent(projectId)}/snapshots`);
+}
+
 export function createScenario(projectId: string, input: { name: string; inputs?: Record<string, number | string | null> }) {
   return apiFetch<ScenarioRecord>(`/api/projects/${projectId}/scenarios`, { method: "POST", body: JSON.stringify(input) });
 }

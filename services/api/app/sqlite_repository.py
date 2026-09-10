@@ -254,6 +254,37 @@ class SqliteProjectRepository:
             ]
         return project
 
+    def delete_project(self, project_id: str) -> None:
+        """级联删除项目及其场景数据；政策来源/抓取记录按城市存储，不受影响。
+
+        scenario_field_value_history 与 calculation_snapshots 无外键约束，必须显式删除。
+        """
+        with self._db() as connection:
+            with connection:
+                scenario_ids = [
+                    row["id"]
+                    for row in connection.execute(
+                        "SELECT id FROM scenarios WHERE project_id = ?", (project_id,)
+                    )
+                ]
+                marks = ",".join("?" * len(scenario_ids))
+                if scenario_ids:
+                    connection.execute(
+                        f"DELETE FROM scenario_field_value_history WHERE scenario_id IN ({marks})",
+                        scenario_ids,
+                    )
+                    connection.execute(
+                        f"DELETE FROM scenario_field_values WHERE scenario_id IN ({marks})",
+                        scenario_ids,
+                    )
+                connection.execute(
+                    "DELETE FROM calculation_snapshots WHERE project_id = ?", (project_id,)
+                )
+                connection.execute("DELETE FROM scenarios WHERE project_id = ?", (project_id,))
+                cursor = connection.execute("DELETE FROM projects WHERE id = ?", (project_id,))
+                if cursor.rowcount == 0:
+                    raise KeyError(project_id)
+
     def _require_project(self, connection: sqlite3.Connection, project_id: str) -> None:
         if connection.execute("SELECT 1 FROM projects WHERE id = ?", (project_id,)).fetchone() is None:
             raise KeyError(project_id)

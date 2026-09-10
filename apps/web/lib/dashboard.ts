@@ -109,4 +109,91 @@ export function formatDashboardDate(value: string | null | undefined): string {
   return Number.isNaN(date.getTime()) ? "—" : date.toLocaleString("zh-CN");
 }
 
+/** 城市复选框选择 → 视图形态。沿用 PRD 9.2：多城市对比上限 5 个。 */
+export const MAX_COMPARE_CITIES = 5;
+
+export function resolveDashboardScope(cityIds: string[]): DashboardScope {
+  if (cityIds.length === 0 || cityIds.length > MAX_COMPARE_CITIES) return "global";
+  return cityIds.length === 1 ? "city" : "compare";
+}
+
+export type DashboardViewMode = "overview" | "single-city" | "multi-city";
+
+export function resolveViewMode(scope: DashboardScope): DashboardViewMode {
+  if (scope === "city") return "single-city";
+  if (scope === "compare") return "multi-city";
+  return "overview";
+}
+
+/** 在全体城市中定位某个指标：返回该城市值与全体中位数、最优值的相对关系。 */
+export type CityMetricStanding = {
+  value: number | null;
+  median: number | null;
+  best: number | null;
+  /** 与中位数比较：positive 表示优于中位数。高优指标的「优」= 更大；回本周期 = 更小。 */
+  delta: number | null;
+  comparison: "above" | "below" | "equal" | "unknown";
+};
+
+export function metricMedian(values: Array<number | null | undefined>): number | null {
+  const usable = values.filter((value): value is number => typeof value === "number" && Number.isFinite(value));
+  if (usable.length === 0) return null;
+  const sorted = [...usable].sort((left, right) => left - right);
+  const middle = Math.floor(sorted.length / 2);
+  return sorted.length % 2 === 0 ? (sorted[middle - 1] + sorted[middle]) / 2 : sorted[middle];
+}
+
+export function cityMetricStanding(
+  cityValue: number | null | undefined,
+  allValues: Array<number | null | undefined>,
+  direction: "higher-is-better" | "lower-is-better" = "higher-is-better",
+): CityMetricStanding {
+  const value = typeof cityValue === "number" && Number.isFinite(cityValue) ? cityValue : null;
+  const usable = allValues.filter((item): item is number => typeof item === "number" && Number.isFinite(item));
+  const median = metricMedian(usable);
+  const best = usable.length === 0 ? null : direction === "higher-is-better" ? Math.max(...usable) : Math.min(...usable);
+  const delta = value === null || median === null ? null : value - median;
+  const comparison: CityMetricStanding["comparison"] =
+    value === null || median === null ? "unknown" : value > median ? "above" : value < median ? "below" : "equal";
+  return { value, median, best, delta, comparison };
+}
+
+export type CostStructureSlice = {
+  key: "caregiverCost" | "salesCost" | "nurseCost" | "fixedCost";
+  label: string;
+  value: number | null;
+  ratio: number | null;
+};
+
+const COST_LABELS: Record<CostStructureSlice["key"], string> = {
+  caregiverCost: "照护师成本",
+  salesCost: "销售成本",
+  nurseCost: "护士成本",
+  fixedCost: "固定成本",
+};
+
+export function buildCostStructure(breakdown: {
+  caregiverCost: number | null;
+  salesCost: number | null;
+  nurseCost: number | null;
+  fixedCost: number | null;
+}): { slices: CostStructureSlice[]; total: number | null } {
+  const slices = (Object.keys(COST_LABELS) as Array<CostStructureSlice["key"]>).map((key) => ({
+    key,
+    label: COST_LABELS[key],
+    value: breakdown[key],
+    ratio: null as number | null,
+  }));
+  const total = slices.reduce<number | null>((acc, slice) => {
+    if (typeof slice.value !== "number") return acc;
+    return (acc ?? 0) + slice.value;
+  }, null);
+  if (total && total > 0) {
+    for (const slice of slices) {
+      slice.ratio = typeof slice.value === "number" ? slice.value / total : null;
+    }
+  }
+  return { slices, total };
+}
+
 export type DashboardApiError = ApiError;
