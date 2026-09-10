@@ -10,6 +10,10 @@ services/api/data/
 services/api/backups/
 services/api/.venv/
 
+# 发布运行时数据与临时虚拟环境。
+runtime-data/
+.venv-publish/
+
 # Next.js 16 generates these workspace hints during dev.
 apps/web/AGENTS.md
 apps/web/CLAUDE.md
