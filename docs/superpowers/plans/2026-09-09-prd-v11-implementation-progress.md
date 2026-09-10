@@ -106,6 +106,31 @@
 ### 旧测试数据清理（原待办 5，已完成，用户已授权）
 删除 2 个测试项目（进程验证项目、SQLite 重启验证）及其场景/快照/字段值/历史，删除 2 条 E2E 来源与 4 条抓取记录、2 条 E2E 快照，清理 `raw_sources/` 下 2 个孤儿 `.bin`。删前用 `scripts/backup_data.py` 备份（`services/api/backups/20260910T014006Z`）。剩余 1 项目 3 场景 3 快照，外键检查通过。
 
+## M7 删除功能 + 总览改版（本轮已完成，已提交 `37c0738`，待推送）
+
+需求来源：`docs/product/需求待办-2026-09-10-删除功能与总览改版.md`（含逐条验收清单与踩坑）。
+门禁：后端 **120 项**、前端 **35 项** + ui **2 项**、typecheck、eslint、`next build` 全绿。
+
+### 需求一 删除功能（PRD 4.4 不静默删除）
+- `ProjectRepository` 协议 + `SqliteProjectRepository` / `JsonProjectRepository` 补 `delete_project`。
+- **级联关键点**：`calculation_snapshots` 与 `scenario_field_value_history` **无外键约束**，必须显式按序删 —— history → values → snapshots → scenarios → projects。删到 0 行抛 `KeyError`。
+- `DELETE /api/projects/{project_id}`（路由需 `response_model=None`），不存在返回 `NOT_FOUND` + `requestId`。
+- **政策来源/抓取记录按城市保留**，不随项目删除（用户确认：政策从政策页独立爬取，按城市名映射进项目）。
+- 前端：`packages/ui` 新增 `alert-dialog.tsx`（`@radix-ui/react-alert-dialog`，复用决策已记录在文件头注释）；根布局挂 Sonner `<Toaster>`；列表页 + 详情页删除入口 + 确认框（展示场景数/已算出结果数/快照数，标明政策保留）。
+- 端到端实测：删除后 4 张关联表行数为 0，`PRAGMA foreign_key_check` 为空，无孤儿行。
+
+### 需求二 总览页三视图改版
+- 城市选择由多选下拉改为**复选框组**，`scope` 由勾选数推导（0 或 >5 → global，1 → city，2–5 → compare）。含全选前 5 / 清除选择 / 超限提示。
+- 三种视图：全城对比（原口径，默认）、单城市分析（新 `city-focus-panel.tsx`）、多城对比。
+- 单城市分析新增：中位数定位指标卡、月度趋势、成本结构饼图 + 占比、中位数横向对比、回本周期分布、数据完整度与风险对比、**政策信息提炼区**。
+- **关键修复**：城市复选框选项按**全量口径独立拉取**（不带 cityIds），否则勾选后筛选响应只剩被选城市、复选框丢选项。
+- 纯函数抽到 `lib/dashboard.ts`（`resolveDashboardScope` / `resolveViewMode` / `metricMedian` / `cityMetricStanding` / `buildCostStructure`）与 `lib/policies.ts`（`buildCityPolicyExtract`），便于单测。
+
+### 新增踩坑（本轮）
+- **nuqs `parseAsArrayOf` 是逗号分隔单键**（`cityIds=a,b`），不是重复键（`cityIds=a&cityIds=b`）。手写重复键 URL 只会解析出第一个值，导致 scope 判断错误。
+- 列表接口的 `scenario.calculatedAt` / `resultSnapshotId` **可能为空**但 `result` 存在且 `status === "calculated"`；统计「已算出结果的场景」须同时判断 `result` 与 `status`，否则低估删除范围。
+- ESLint `react-hooks/set-state-in-effect`：effect 体内同步 `setState` 报错，须移入 Promise 回调。
+
 ## 待办（剩余，仅 1 项）
 
 1. **B12 GR 公关费用**：参数字典标「公式自动」但 Excel E47 是常量 5000，引擎目前当普通必填输入读（engine.py 中 `B12` 仍 required）。需业务确认后决定：改为只读常量公式 + issue 标记，属模型语义变更，勿擅自改（AGENTS.md 门禁）
