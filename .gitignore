@@ -15,3 +15,7 @@ apps/web/AGENTS.md
 apps/web/CLAUDE.md
 .vercel
 .env*
+
+# 本地工具与工作区数据，不进入版本库。
+.arts/
+.workbuddy/

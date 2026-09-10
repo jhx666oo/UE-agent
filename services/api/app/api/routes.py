@@ -704,6 +704,7 @@ def _field_value_view(
         "name": entry["name"],
         "unit": entry["unit"],
         "sourceType": source_type,
+        "valueType": entry.get("valueType"),
         "block": entry["block"],
         "blockOrder": entry["blockOrder"],
         "readOnly": source_type == "公式自动",

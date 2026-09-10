@@ -29,6 +29,7 @@ export type FieldValueView = {
   name: string;
   unit: string;
   sourceType: string;
+  valueType?: string | null;
   block: string;
   blockOrder: number;
   readOnly: boolean;

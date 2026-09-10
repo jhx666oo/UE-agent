@@ -58,6 +58,12 @@ class FieldValueApiTests(unittest.TestCase):
         self.assertEqual(by_id["C3"]["suggestedSource"]["sourceName"], "长沙市统计局")
         self.assertIsNotNone(by_id["C3"]["suggestedAt"])
         self.assertEqual(by_id["C3"]["currentValue"], 1000)
+        # valueType 必须透传：前端依赖它区分文本/数字控件。
+        # C1 城市名称是 string，若缺失会退化成数字输入框并把文本值当数字处理（历史缺陷）。
+        self.assertEqual(by_id["C1"]["valueType"], "string")
+        self.assertEqual(by_id["C3"]["valueType"], "number")
+        for field in body["fields"]:
+            self.assertIn("valueType", field, field["fieldId"])
         # 无建议值的爬虫字段状态为 empty
         self.assertEqual(by_id["C10"]["valueState"], "empty")
         self.assertIsNone(by_id["C10"]["suggestedValue"])

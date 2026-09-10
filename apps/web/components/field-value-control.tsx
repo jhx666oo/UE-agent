@@ -44,6 +44,9 @@ export function FieldValueControl({
 }>) {
   const isFormula = field.sourceType === "公式自动";
   const isCrawler = field.sourceType === "自动爬虫";
+  // 文本类字段（如 C1 城市名称）必须渲染文本输入框：数字输入框会把文本值当数字处理，
+  // 点击上下箭头会把 "长沙" 逐步减成 0 再清空，造成数据丢失。
+  const isText = field.valueType === "string";
   const stateMeta = VALUE_STATE_LABELS[field.valueState];
   const hasSuggestion = isCrawler && field.suggestedValue !== null && field.suggestedValue !== undefined;
   const suggestedDisplay = hasSuggestion
@@ -84,6 +87,17 @@ export function FieldValueControl({
       </select>
       <IconChevronDown className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground" size={16} stroke={1.8} />
     </div>
+  ) : isText ? (
+    <Input
+      id={`field-${field.fieldId}`}
+      type="text"
+      value={formatValue(field.currentValue)}
+      placeholder={field.sourceType === "自动爬虫" && !hasSuggestion ? "暂无爬虫数据，可手动填写" : "请输入"}
+      onChange={(event) => {
+        const next = event.target.value;
+        onValueChange(next === "" ? null : next);
+      }}
+    />
   ) : (
     <Input
       id={`field-${field.fieldId}`}
