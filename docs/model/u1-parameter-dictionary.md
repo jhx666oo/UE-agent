@@ -12,7 +12,7 @@
 | `excelCell` | 原始工作簿控制台单元格 |
 | `inputKind` | `manual`、`reference_or_manual` 或 `formula` |
 | `stage` | P0/P1/P2 使用阶段 |
-| `sourceType` | 内部填写、自动爬虫、市场调研或暗访实地 |
+| `sourceType` | 字段来源，仅三类：内部填写、自动爬虫、公式自动 |
 | `required` | 是否为当前公式链所需输入 |
 | `parityStatus` | `parity` 或 `needs_business_confirmation` |
 

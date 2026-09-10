@@ -53,9 +53,12 @@ class FieldApiTests(unittest.TestCase):
         self.assertEqual(by_id["C2"]["options"], ["一线", "新一线", "二线", "三线"])
         self.assertEqual(by_id["B3"]["options"], ["挂证", "全职", "兼任"])
         self.assertIsNone(by_id["C1"]["options"])
-        # 其他来源字段可留空
-        self.assertEqual(by_id["S1"]["sourceType"], "暗访实地")
+        # 只存在三类来源：内部填写（含原暗访实地/市场调研）、自动爬虫、公式自动
+        self.assertEqual({field["sourceType"] for field in fields}, {"内部填写", "自动爬虫", "公式自动"})
+        # 内部填写字段可编辑、可留空
+        self.assertEqual(by_id["S1"]["sourceType"], "内部填写")
         self.assertTrue(by_id["S1"]["editable"])
+        self.assertFalse(by_id["S1"]["readOnly"])
         # 通用字段
         for field in fields:
             for key in ("fieldId", "name", "unit", "excelCell", "sourceType", "block", "blockOrder", "stage", "valueType", "required", "editable", "readOnly"):

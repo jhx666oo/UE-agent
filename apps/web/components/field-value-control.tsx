@@ -25,9 +25,9 @@ function formatValue(value: number | string | null): string {
 }
 
 /**
- * PRD 12.2 / 17.3 四类数据源交互：
- * 内部填写 = 普通可编辑控件；自动爬虫 = 输入框 + 灰色建议值 + 采用按钮；
- * 公式自动 = 只读结果框；其他来源（暗访实地/市场调研）= 可填写可留空。
+ * PRD 12.2 / 17.3 三类数据源交互（sourceType 已统一，不再有暗访实地/市场调研）：
+ * 内部填写 = 普通可编辑控件（可留空）；自动爬虫 = 输入框 + 灰色建议值 + 采用按钮；
+ * 公式自动 = 只读结果框。
  */
 export function FieldValueControl({
   field,
