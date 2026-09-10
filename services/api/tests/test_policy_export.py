@@ -4,9 +4,11 @@
 """
 from __future__ import annotations
 
+import io
 import tempfile
 import unittest
 import warnings
+import zipfile
 from pathlib import Path
 
 warnings.filterwarnings("ignore", message="Using `httpx` with `starlette.testclient` is deprecated")
@@ -100,6 +102,41 @@ class PolicyExportTests(unittest.TestCase):
         response = self.client.get("/api/policies/export?format=csv&dataset=unknown")
         self.assertEqual(response.status_code, 400)
         self.assertEqual(response.json()["error"]["code"], "UNSUPPORTED_EXPORT_DATASET")
+
+    def test_zip_export_packs_raw_files_and_manifest(self) -> None:
+        source = self._seed()
+        raw_dir = Path(self.temp_dir.name) / "raw_sources"
+        raw_dir.mkdir(parents=True, exist_ok=True)
+        (raw_dir / "test-policy.html").write_bytes(b"<html>policy</html>")
+        self.repository.create_crawl_artifact(
+            {
+                "sourceId": source["id"],
+                "cityId": "长沙",
+                "requestedUrl": "https://example.com",
+                "finalUrl": "https://example.com",
+                "httpStatus": 200,
+                "contentType": "text/html",
+                "contentLength": 20,
+                "sha256": "abc123",
+                "storedPath": "raw_sources/test-policy.html",
+                "title": "测试政策",
+                "changeStatus": "first_fetch",
+                "status": "success",
+            }
+        )
+        response = self.client.get(f"/api/policies/export?format=zip&sourceId={source['id']}")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.headers["content-type"], "application/zip")
+        with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
+            names = archive.namelist()
+            self.assertIn("manifest.csv", names)
+            self.assertIn("raw/test-policy.html", names)
+            self.assertEqual(archive.read("raw/test-policy.html"), b"<html>policy</html>")
+
+    def test_zip_export_requires_source_id(self) -> None:
+        response = self.client.get("/api/policies/export?format=zip")
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["error"]["code"], "MISSING_EXPORT_SOURCE")
 
 
 if __name__ == "__main__":

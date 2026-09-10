@@ -196,6 +196,35 @@ class FieldValueApiTests(unittest.TestCase):
         # 手工值不被新建议值覆盖
         self.assertEqual(by_id["C3"]["currentValue"], 850)
 
+    def test_city_values_alias_resolves_main_scenario(self):
+        project_id, scenario_id = _make_scenario(self.client)
+
+        response = self.client.get("/api/cities/changsha/values")
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["cityId"], "changsha")
+        self.assertEqual(body["scenarioId"], scenario_id)
+        field_ids = {field["fieldId"] for field in body["fields"]}
+        self.assertIn("C3", field_ids)
+        self.assertIn("P1", field_ids)
+
+    def test_city_values_alias_unknown_city_returns_404(self):
+        response = self.client.get("/api/cities/unknown-city/values")
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.json()["error"]["code"], "NOT_FOUND")
+
+    def test_city_patch_alias_updates_main_scenario_value(self):
+        _make_scenario(self.client)
+
+        response = self.client.patch("/api/cities/changsha/values/C3", json={"value": 850})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["currentValue"], 850)
+        values = self.client.get("/api/cities/changsha/values").json()
+        by_id = {field["fieldId"]: field for field in values["fields"]}
+        self.assertEqual(by_id["C3"]["currentValue"], 850)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -4,6 +4,7 @@ import csv
 import io
 import json
 import uuid
+import zipfile
 from dataclasses import fields, is_dataclass
 from datetime import datetime, timezone
 from collections.abc import Mapping
@@ -347,6 +348,49 @@ def _csv_response(filename: str, header: list[str], rows: list[list[Any]]) -> Re
     )
 
 
+def _zip_response(source_id: str, artifacts: list[dict[str, Any]], request: Request) -> Response:
+    """PRD 16.7：把某个来源的抓取原文打包成 ZIP，附带抓取记录清单。"""
+    from ..repository import LocalPolicyFileStore
+
+    raw_dir = _raw_sources_dir(request)
+    store = LocalPolicyFileStore(raw_dir.parent)
+
+    buffer = io.BytesIO()
+    manifest_rows: list[list[Any]] = []
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+        for artifact in artifacts:
+            artifact_id = artifact.get("artifactId") or artifact.get("id")
+            stored_path = artifact.get("storedPath")
+            raw_name = f"{artifact_id}.bin"
+            if stored_path:
+                try:
+                    content = store.get(stored_path)
+                except (FileNotFoundError, ValueError):
+                    content = None
+                else:
+                    raw_name = Path(stored_path).name or raw_name
+                    archive.writestr(f"raw/{raw_name}", content)
+            manifest_rows.append(
+                [
+                    artifact_id, raw_name if stored_path else "", artifact.get("sha256"),
+                    artifact.get("title"), artifact.get("fetchedAt"), artifact.get("httpStatus"),
+                    artifact.get("changeStatus"), artifact.get("status"), artifact.get("errorMessage"),
+                ]
+            )
+        manifest_csv = io.StringIO()
+        writer = csv.writer(manifest_csv)
+        writer.writerow(["抓取记录ID", "原始文件名", "SHA256", "标题", "抓取时间", "HTTP状态", "变更状态", "状态", "错误信息"])
+        for row in manifest_rows:
+            writer.writerow(["" if value is None else value for value in row])
+        archive.writestr("manifest.csv", ("\ufeff" + manifest_csv.getvalue()).encode("utf-8"))
+
+    return Response(
+        content=buffer.getvalue(),
+        media_type="application/zip",
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(f'政策原文-{source_id}.zip')}"},
+    )
+
+
 def _source_name_of(row: Mapping[str, Any]) -> Any:
     source = row.get("suggestedSource")
     return source.get("sourceName") if isinstance(source, Mapping) else None
@@ -406,9 +450,9 @@ def export_policies(
 
     建议值、实际值和手工覆盖值分列导出，并附带来源、采集时间和状态（PRD 11.12）。
     """
-    if format not in ("csv", "json"):
-        return error_payload("UNSUPPORTED_EXPORT_FORMAT", f"不支持的导出格式：{format}，可选 csv 或 json")
-    if dataset not in ("fields", "sources", "artifacts"):
+    if format not in ("csv", "json", "zip"):
+        return error_payload("UNSUPPORTED_EXPORT_FORMAT", f"不支持的导出格式：{format}，可选 csv、json 或 zip")
+    if format in ("csv", "json") and dataset not in ("fields", "sources", "artifacts"):
         return error_payload(
             "UNSUPPORTED_EXPORT_DATASET", f"不支持的导出内容：{dataset}，可选 fields、sources 或 artifacts"
         )
@@ -416,6 +460,13 @@ def export_policies(
     repository = repository_from_request(request)
     sources, artifacts, field_rows = _collect_export_data(repository, cityId, sourceId)
     label = cityId or sourceId or scope
+
+    if format == "zip":
+        if not sourceId:
+            return error_payload("MISSING_EXPORT_SOURCE", "ZIP 导出需要指定 sourceId", field="sourceId")
+        if not artifacts:
+            return error_payload("NOT_FOUND", f"该来源没有可导出的抓取原文：{sourceId}")
+        return _zip_response(sourceId, artifacts, request)
 
     if format == "json":
         body = json.dumps(
@@ -659,30 +710,32 @@ def _scenario_value_rows(repository: ProjectRepository, scenario_id: str) -> dic
     return {row["fieldId"]: row for row in repository.list_field_values(scenario_id)}
 
 
+def _scenario_fields_view(
+    repository: ProjectRepository, project_id: str, scenario_id: str
+) -> list[dict[str, Any]]:
+    """按参数字典顺序构建一个场景的完整字段视图（当前值 + 建议值 + 状态）。"""
+    scenario = repository.get_scenario(project_id, scenario_id)
+    rows = _scenario_value_rows(repository, scenario_id)
+    inputs = scenario.get("inputs") or {}
+    catalog = load_parameter_catalog()
+    return [_field_value_view(entry, inputs.get(entry["id"]), rows.get(entry["id"])) for entry in catalog.values()]
+
+
 @router.get("/projects/{project_id}/scenarios/{scenario_id}/values", response_model=None)
 def list_scenario_values(
     project_id: str, scenario_id: str, request: Request
 ) -> dict[str, Any] | JSONResponse:
     repository = repository_from_request(request)
     try:
-        scenario = repository.get_scenario(project_id, scenario_id)
+        fields = _scenario_fields_view(repository, project_id, scenario_id)
     except KeyError:
         return error_payload("NOT_FOUND", f"Scenario not found: {scenario_id}")
-    rows = _scenario_value_rows(repository, scenario_id)
-    inputs = scenario.get("inputs") or {}
-    catalog = load_parameter_catalog()
-    fields = [
-        _field_value_view(entry, inputs.get(entry["id"]), rows.get(entry["id"]))
-        for entry in catalog.values()
-    ]
     return {"scenarioId": scenario_id, "fields": fields}
 
 
-@router.patch("/projects/{project_id}/scenarios/{scenario_id}/values/{field_id}", response_model=None)
-def patch_scenario_value(
-    project_id: str, scenario_id: str, field_id: str, payload: FieldValueUpdate, request: Request
+def _patch_field_value(
+    repository: ProjectRepository, project_id: str, scenario_id: str, field_id: str, payload: FieldValueUpdate
 ) -> dict[str, Any] | JSONResponse:
-    repository = repository_from_request(request)
     validation = validate_scenario_inputs({field_id: payload.value})
     if validation is not None:
         return validation
@@ -697,14 +750,9 @@ def patch_scenario_value(
     return _field_value_view(entry, (scenario.get("inputs") or {}).get(field_id), rows.get(field_id))
 
 
-@router.post(
-    "/projects/{project_id}/scenarios/{scenario_id}/values/{field_id}/accept-suggestion",
-    response_model=None,
-)
-def accept_field_suggestion(
-    project_id: str, scenario_id: str, field_id: str, request: Request
+def _accept_field_suggestion(
+    repository: ProjectRepository, project_id: str, scenario_id: str, field_id: str
 ) -> dict[str, Any] | JSONResponse:
-    repository = repository_from_request(request)
     catalog = load_parameter_catalog()
     entry = catalog.get(field_id)
     if entry is None:
@@ -732,6 +780,76 @@ def accept_field_suggestion(
     scenario = repository.get_scenario(project_id, scenario_id)
     rows = _scenario_value_rows(repository, scenario_id)
     return _field_value_view(entry, (scenario.get("inputs") or {}).get(field_id), rows.get(field_id))
+
+
+@router.patch("/projects/{project_id}/scenarios/{scenario_id}/values/{field_id}", response_model=None)
+def patch_scenario_value(
+    project_id: str, scenario_id: str, field_id: str, payload: FieldValueUpdate, request: Request
+) -> dict[str, Any] | JSONResponse:
+    return _patch_field_value(repository_from_request(request), project_id, scenario_id, field_id, payload)
+
+
+@router.post(
+    "/projects/{project_id}/scenarios/{scenario_id}/values/{field_id}/accept-suggestion",
+    response_model=None,
+)
+def accept_field_suggestion(
+    project_id: str, scenario_id: str, field_id: str, request: Request
+) -> dict[str, Any] | JSONResponse:
+    return _accept_field_suggestion(repository_from_request(request), project_id, scenario_id, field_id)
+
+
+# ---------- 城市级字段值别名（PRD 16.6） ----------
+
+
+def _resolve_city_scenario(repository: ProjectRepository, city_id: str) -> tuple[str, str]:
+    """把城市标识解析到「主项目 + 主场景」。
+
+    城市由 cityId 或 city（中文名）匹配，主场景取 updatedAt 最新者，与仪表盘聚合器保持一致。
+    """
+    projects = repository.list_projects()
+    matches = [p for p in projects if p.get("cityId") == city_id or p.get("city") == city_id]
+    if not matches:
+        raise KeyError(city_id)
+    project = matches[0]
+    scenarios = project.get("scenarios") or []
+    if not scenarios:
+        raise KeyError(city_id)
+    main_scenario = max(scenarios, key=lambda s: str(s.get("updatedAt") or ""))
+    return str(project["id"]), str(main_scenario["id"])
+
+
+@router.get("/cities/{city_id}/values", response_model=None)
+def list_city_values(city_id: str, request: Request) -> dict[str, Any] | JSONResponse:
+    repository = repository_from_request(request)
+    try:
+        project_id, scenario_id = _resolve_city_scenario(repository, city_id)
+        fields = _scenario_fields_view(repository, project_id, scenario_id)
+    except KeyError:
+        return error_payload("NOT_FOUND", f"City not found: {city_id}")
+    return {"cityId": city_id, "scenarioId": scenario_id, "fields": fields}
+
+
+@router.patch("/cities/{city_id}/values/{field_id}", response_model=None)
+def patch_city_value(
+    city_id: str, field_id: str, payload: FieldValueUpdate, request: Request
+) -> dict[str, Any] | JSONResponse:
+    repository = repository_from_request(request)
+    try:
+        project_id, scenario_id = _resolve_city_scenario(repository, city_id)
+    except KeyError:
+        return error_payload("NOT_FOUND", f"City not found: {city_id}")
+    return _patch_field_value(repository, project_id, scenario_id, field_id, payload)
+
+
+@router.post("/cities/{city_id}/values/{field_id}/accept-suggestion", response_model=None)
+def accept_city_suggestion(city_id: str, field_id: str, request: Request) -> dict[str, Any] | JSONResponse:
+    repository = repository_from_request(request)
+    try:
+        project_id, scenario_id = _resolve_city_scenario(repository, city_id)
+    except KeyError:
+        return error_payload("NOT_FOUND", f"City not found: {city_id}")
+    return _accept_field_suggestion(repository, project_id, scenario_id, field_id)
 
 
 @router.post("/projects/{project_id}/scenarios/{scenario_id}/confirm", response_model=None)
