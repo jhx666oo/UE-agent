@@ -131,9 +131,20 @@
 - 列表接口的 `scenario.calculatedAt` / `resultSnapshotId` **可能为空**但 `result` 存在且 `status === "calculated"`；统计「已算出结果的场景」须同时判断 `result` 与 `status`，否则低估删除范围。
 - ESLint `react-hooks/set-state-in-effect`：effect 体内同步 `setState` 报错，须移入 Promise 回调。
 
-## 待办（剩余，仅 1 项）
+## 待办（已清空）
 
-1. **B12 GR 公关费用**：参数字典标「公式自动」但 Excel E47 是常量 5000，引擎目前当普通必填输入读（engine.py 中 `B12` 仍 required）。需业务确认后决定：改为只读常量公式 + issue 标记，属模型语义变更，勿擅自改（AGENTS.md 门禁）
+1. ~~**B12 GR 公关费用**~~ 已按业务确认落地：**定位为只读常量 5000**，不再作为必填输入（详见下节）。
+
+## M8 · B12 GR 公关费用改为默认常量 5000
+
+**背景（原矛盾）**：参数字典把 B12 标为 `sourceType: 公式自动` ⇒ 前端 `readOnly` 且更新接口拒绝写入（`FORMULA_FIELD_READ_ONLY`）；但引擎又把它列进 `REQUIRED_DRIVERS` ⇒ 缺值即 `blocked`。结果是：场景若没被预填 B12，用户**既无法在 UI 填、也无法让测算通过**。Excel 侧 `控制台!E47` 实为固定常量 5000，`sourceType: 公式自动` 的判断本身是误标。
+
+**落地方式**：
+- `packages/model-spec/parameters/u1.parameters.json`：B12 `required: false`、`inputKind: formula`，新增 `defaultValue: 5000`；`sourceType` 保持「公式自动」、`parityStatus` 保持 `parity`。
+- `services/api/app/domain/u1/engine.py`：新增 `DEFAULT_GOVERNMENT_RELATIONS_COST = 5000.0` 与 `DEFAULT_PARAMETER_VALUES = {"B12": ...}`；**从 `REQUIRED_DRIVERS` 移除 `B12`**；`calculate_u1` 在校验后、派生量计算前用默认值补齐 `resolved`，**用户显式给值优先**。
+- 成本公式本身未动：筹备期 = B12，启动期 = B12 × 0.3，平台期 = 0。默认值 5000 与 baseline 的 `"B12": 5000` 完全一致，parity 结果不变。
+
+**边界**：默认值只作用于「缺省补齐」，不是「把缺失当 0」，也不覆盖已确认值；政策/来源与 B12 无关，未受影响。
 
 ## 验证命令速查
 
@@ -144,3 +155,4 @@ cd apps/web && ../apps/web/node_modules/.bin/vitest run   # 前端（本机 pnpm
 ```
 
 注意：本机 shell 没有 pnpm/corepack，Python 用 `services/api/.venv/bin/python` 直跑。
+嵌套 `pnpm` 脚本（`pnpm lint` 等内部再调 `pnpm`）在本机 shell 会 `command not found`，需改用 `corepack pnpm --filter ... lint` / `--recursive typecheck` 等直接形式。

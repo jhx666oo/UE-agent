@@ -18,6 +18,14 @@ from .stages import PLATFORM, PREPARATION, STARTUP, build_stage_sequence
 
 DEFAULT_MODEL_VERSION = "u1-excel-v2.1-parity"
 
+# B12（GR公关月均费用）在原 Excel 控制台中为固定常量 5000，不由用户填写。
+# 这里作为唯一事实来源：参数缺省时用该值，而不是把缺失数据当 0。
+DEFAULT_GOVERNMENT_RELATIONS_COST = 5000.0
+
+DEFAULT_PARAMETER_VALUES: Mapping[str, Any] = {
+    "B12": DEFAULT_GOVERNMENT_RELATIONS_COST,
+}
+
 REQUIRED_DRIVERS = (
     "C3",
     "C4",
@@ -46,7 +54,6 @@ REQUIRED_DRIVERS = (
     "B9",
     "B10",
     "B11",
-    "B12",
     "B13",
     "B14",
     "B15",
@@ -263,6 +270,10 @@ def calculate_u1(values: Mapping[str, Any], model_version: str = DEFAULT_MODEL_V
         return _blocked_result(values, model_version, missing)
 
     resolved = dict(values)
+    # 常量参数（如 B12）先用默认值补齐，用户显式提供的值优先。
+    for parameter_id, default_value in DEFAULT_PARAMETER_VALUES.items():
+        if resolved.get(parameter_id) is None:
+            resolved[parameter_id] = default_value
     derived = {
         "C9": population_density(resolved),
         "P3": personal_payment_ratio(resolved),
