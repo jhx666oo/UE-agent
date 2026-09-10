@@ -18,3 +18,9 @@ test = [
 
 [tool.ue-agent]
 model-version = "u1-excel-v2.1-parity"
+
+# 显式声明 Vercel 运行时的 ASGI 入口。Vercel 的零配置探测在本 monorepo 中
+# 未能稳定识别 app/main.py，导致线上 FUNCTION_INVOCATION_FAILED（并因此缺少
+# CORS 头，浏览器报“CORS policy blocked”）。显式指向 FastAPI 实例最稳妥。
+[tool.vercel]
+entrypoint = "app.main:app"

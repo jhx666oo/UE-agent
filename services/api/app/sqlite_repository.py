@@ -36,9 +36,20 @@ SOURCE_COLUMN_BY_KEY = {api_key: column for column, api_key in SQLITE_SOURCE_KEY
 
 
 def default_data_dir() -> Path:
+    """返回可写的 SQLite 数据目录。
+
+    优先级：UE_AGENT_DATA_DIR > 本地仓库 data/ > Vercel 的 /tmp。
+
+    Serverless 运行时（Vercel Functions）把代码目录挂载为只读，只有 /tmp 可写。
+    若不重定向，SqliteProjectRepository 初始化时的建库/建表会抛
+    "Read-only file system" 并导致整个函数 500（表现为浏览器端“缺少 CORS 头”）。
+    注意 /tmp 实例间不共享，冷启动会重置数据——正式持久化需配置 DATABASE_URL。
+    """
     configured = os.getenv("UE_AGENT_DATA_DIR")
     if configured:
         return Path(configured)
+    if os.getenv("VERCEL"):
+        return Path("/tmp/ue-agent-data")
     return DATA_ROOT
 
 
