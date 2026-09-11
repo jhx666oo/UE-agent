@@ -36,6 +36,9 @@ def create_repository() -> ProjectRepository:
 def create_app(repository: ProjectRepository | None = None) -> FastAPI:
     app = FastAPI(title="UE Agent API", version="0.1.0")
     app.state.repository = repository or create_repository()
+    # 仅本地端到端验证用：显式设置 UE_AGENT_E2E_ALLOW_PRIVATE=1 才放行回环/私有地址。
+    # 生产路径必须保持拒绝（crawlers 模块默认 SSRF 防护）。
+    app.state.crawl_allow_private = os.getenv("UE_AGENT_E2E_ALLOW_PRIVATE") == "1"
     app.add_middleware(
         CORSMiddleware,
         allow_origins=allowed_origins(),

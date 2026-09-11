@@ -147,6 +147,25 @@ class ProjectRepository(Protocol):
 
     def create_crawl_artifact(self, data: Mapping[str, Any]) -> dict[str, Any]: ...
 
+    # ---------- AI 回传链路（WorkBuddy 驱动） ----------
+    def list_candidate_sources(
+        self, *, city_id: str | None = None, status: str | None = None
+    ) -> list[dict[str, Any]]: ...
+
+    def create_candidate_source(self, data: Mapping[str, Any]) -> dict[str, Any]: ...
+
+    def update_candidate_source(
+        self, candidate_id: str, data: Mapping[str, Any]
+    ) -> dict[str, Any]: ...
+
+    def get_candidate_source(self, candidate_id: str) -> dict[str, Any]: ...
+
+    def create_extraction_submission(self, data: Mapping[str, Any]) -> dict[str, Any]: ...
+
+    def list_extraction_submissions(
+        self, *, city_id: str | None = None, limit: int | None = None
+    ) -> list[dict[str, Any]]: ...
+
 
 class LocalPolicyFileStore:
     def __init__(self, root: Path):
@@ -751,6 +770,84 @@ class JsonProjectRepository:
         payload.setdefault("crawlArtifacts", []).append(artifact)
         self._write(payload)
         return copy.deepcopy(artifact)
+
+    # ---------- AI 回传链路（WorkBuddy 驱动） ----------
+
+    def list_candidate_sources(
+        self, *, city_id: str | None = None, status: str | None = None
+    ) -> list[dict[str, Any]]:
+        items = self._read().get("candidateSources", [])
+        return [
+            copy.deepcopy(item)
+            for item in items
+            if (city_id is None or item.get("cityId") == city_id)
+            and (status is None or item.get("status") == status)
+        ]
+
+    def get_candidate_source(self, candidate_id: str) -> dict[str, Any]:
+        for item in self._read().get("candidateSources", []):
+            if item.get("id") == candidate_id:
+                return copy.deepcopy(item)
+        raise KeyError(candidate_id)
+
+    def create_candidate_source(self, data: Mapping[str, Any]) -> dict[str, Any]:
+        now = utc_now()
+        incoming = copy.deepcopy(dict(data))
+        incoming.setdefault("origin", "ai_search")
+        incoming.setdefault("status", "candidate")
+        incoming["updatedAt"] = now
+        payload = self._read()
+        candidates = payload.setdefault("candidateSources", [])
+        # 同城内同一 URL 视为同一候选，直接复用避免重复入池。
+        for existing in candidates:
+            if existing.get("cityId") == incoming.get("cityId") and existing.get("url") == incoming.get("url"):
+                # 保留既有 id / status / createdAt，只更新来源元数据。
+                preserved = {
+                    key: existing.get(key)
+                    for key in ("id", "status", "createdAt", "promotedSourceId", "reviewedBy", "reviewedAt")
+                }
+                existing.update(incoming)
+                existing.update({k: v for k, v in preserved.items() if v is not None})
+                self._write(payload)
+                return copy.deepcopy(existing)
+        candidate = {**incoming, "id": incoming.get("id") or new_id("candidate"), "createdAt": now}
+        candidates.append(candidate)
+        self._write(payload)
+        return copy.deepcopy(candidate)
+
+    def update_candidate_source(
+        self, candidate_id: str, data: Mapping[str, Any]
+    ) -> dict[str, Any]:
+        payload = self._read()
+        for item in payload.get("candidateSources", []):
+            if item.get("id") == candidate_id:
+                item.update(copy.deepcopy(dict(data)))
+                item["updatedAt"] = utc_now()
+                self._write(payload)
+                return copy.deepcopy(item)
+        raise KeyError(candidate_id)
+
+    def create_extraction_submission(self, data: Mapping[str, Any]) -> dict[str, Any]:
+        now = utc_now()
+        submission = copy.deepcopy(dict(data))
+        submission.setdefault("id", new_id("submission"))
+        submission.setdefault("submittedAt", now)
+        submission.setdefault("createdAt", now)
+        payload = self._read()
+        payload.setdefault("extractionSubmissions", []).append(submission)
+        self._write(payload)
+        return copy.deepcopy(submission)
+
+    def list_extraction_submissions(
+        self, *, city_id: str | None = None, limit: int | None = None
+    ) -> list[dict[str, Any]]:
+        items = [
+            copy.deepcopy(item)
+            for item in self._read().get("extractionSubmissions", [])
+            if city_id is None or item.get("cityId") == city_id
+        ]
+        items.sort(key=lambda item: str(item.get("submittedAt") or ""), reverse=True)
+        return items[:limit] if limit else items
 
 
 class PostgresProjectRepository(JsonProjectRepository):

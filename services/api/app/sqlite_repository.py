@@ -1082,3 +1082,221 @@ class SqliteProjectRepository:
                 ),
             )
         return {k: v for k, v in artifact.items() if k != "rawContent"}
+
+    # ---------- AI 回传链路（WorkBuddy 驱动） ----------
+
+    @staticmethod
+    def _candidate_source_dict(row: sqlite3.Row) -> dict[str, Any]:
+        return {
+            "id": row["id"],
+            "cityId": row["city_id"],
+            "name": row["name"],
+            "url": row["url"],
+            "domain": row["domain"],
+            "title": row["title"],
+            "publishedAt": row["published_at"],
+            "summary": row["summary"],
+            "targetFields": _load(row["target_fields_json"], []),
+            "relevance": _load(row["relevance_json"]),
+            "origin": row["origin"],
+            "status": row["status"],
+            "promotedSourceId": row["promoted_source_id"],
+            "reviewedBy": row["reviewed_by"],
+            "reviewedAt": row["reviewed_at"],
+            "note": row["note"],
+            "createdAt": row["created_at"],
+            "updatedAt": row["updated_at"],
+        }
+
+    def list_candidate_sources(
+        self, *, city_id: str | None = None, status: str | None = None
+    ) -> list[dict[str, Any]]:
+        clauses: list[str] = []
+        params: list[Any] = []
+        if city_id is not None:
+            clauses.append("city_id = ?")
+            params.append(city_id)
+        if status is not None:
+            clauses.append("status = ?")
+            params.append(status)
+        where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
+        with self._db() as connection:
+            rows = connection.execute(
+                f"SELECT * FROM candidate_sources{where} ORDER BY created_at DESC, id DESC", params
+            ).fetchall()
+        return [self._candidate_source_dict(row) for row in rows]
+
+    def get_candidate_source(self, candidate_id: str) -> dict[str, Any]:
+        with self._db() as connection:
+            row = connection.execute(
+                "SELECT * FROM candidate_sources WHERE id = ?", (candidate_id,)
+            ).fetchone()
+        if row is None:
+            raise KeyError(candidate_id)
+        return self._candidate_source_dict(row)
+
+    def create_candidate_source(self, data: Mapping[str, Any]) -> dict[str, Any]:
+        now = utc_now()
+        candidate_id = str(data.get("id") or new_id("candidate"))
+        city_id = str(data.get("cityId") or "")
+        url = str(data.get("url") or "")
+        with self._db() as connection:
+            # 同城内同一 URL 视为同一候选：更新元数据并返回既有记录，避免重复入池。
+            existing = connection.execute(
+                "SELECT id FROM candidate_sources WHERE city_id = ? AND url = ?", (city_id, url)
+            ).fetchone()
+            if existing is not None:
+                candidate_id = existing["id"]
+                connection.execute(
+                    "UPDATE candidate_sources SET name = ?, domain = ?, title = ?, published_at = ?,"
+                    " summary = ?, target_fields_json = ?, relevance_json = ?, note = ?, updated_at = ?"
+                    " WHERE id = ?",
+                    (
+                        str(data.get("name") or ""),
+                        data.get("domain"),
+                        data.get("title"),
+                        data.get("publishedAt"),
+                        data.get("summary"),
+                        _dump(data.get("targetFields") or []),
+                        _dump(data.get("relevance")),
+                        data.get("note"),
+                        now,
+                        candidate_id,
+                    ),
+                )
+            else:
+                connection.execute(
+                    "INSERT INTO candidate_sources (id, city_id, name, url, domain, title, published_at,"
+                    " summary, target_fields_json, relevance_json, origin, status, promoted_source_id,"
+                    " reviewed_by, reviewed_at, note, created_at, updated_at)"
+                    " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        candidate_id,
+                        city_id,
+                        str(data.get("name") or url or "未命名来源"),
+                        url,
+                        data.get("domain"),
+                        data.get("title"),
+                        data.get("publishedAt"),
+                        data.get("summary"),
+                        _dump(data.get("targetFields") or []),
+                        _dump(data.get("relevance")),
+                        str(data.get("origin") or "ai_search"),
+                        str(data.get("status") or "candidate"),
+                        data.get("promotedSourceId"),
+                        data.get("reviewedBy"),
+                        data.get("reviewedAt"),
+                        data.get("note"),
+                        now,
+                        now,
+                    ),
+                )
+            row = connection.execute(
+                "SELECT * FROM candidate_sources WHERE id = ?", (candidate_id,)
+            ).fetchone()
+        return self._candidate_source_dict(row)
+
+    def update_candidate_source(
+        self, candidate_id: str, data: Mapping[str, Any]
+    ) -> dict[str, Any]:
+        column_map = {
+            "name": "name",
+            "url": "url",
+            "domain": "domain",
+            "title": "title",
+            "publishedAt": "published_at",
+            "summary": "summary",
+            "status": "status",
+            "promotedSourceId": "promoted_source_id",
+            "reviewedBy": "reviewed_by",
+            "reviewedAt": "reviewed_at",
+            "note": "note",
+        }
+        assignments: list[str] = []
+        params: list[Any] = []
+        for key, column in column_map.items():
+            if key not in data:
+                continue
+            assignments.append(f"{column} = ?")
+            params.append(data[key])
+        if "targetFields" in data:
+            assignments.append("target_fields_json = ?")
+            params.append(_dump(data["targetFields"]))
+        if "relevance" in data:
+            assignments.append("relevance_json = ?")
+            params.append(_dump(data["relevance"]))
+        assignments.append("updated_at = ?")
+        params.append(utc_now())
+        params.append(candidate_id)
+        with self._db() as connection:
+            cursor = connection.execute(
+                f"UPDATE candidate_sources SET {', '.join(assignments)} WHERE id = ?", params
+            )
+            if cursor.rowcount == 0:
+                raise KeyError(candidate_id)
+            row = connection.execute(
+                "SELECT * FROM candidate_sources WHERE id = ?", (candidate_id,)
+            ).fetchone()
+        return self._candidate_source_dict(row)
+
+    @staticmethod
+    def _submission_dict(row: sqlite3.Row) -> dict[str, Any]:
+        return {
+            "id": row["id"],
+            "cityId": row["city_id"],
+            "sourceId": row["source_id"],
+            "artifactId": row["artifact_id"],
+            "agentRunId": row["agent_run_id"],
+            "agentVersion": row["agent_version"],
+            "payload": _load(row["payload_json"], {}),
+            "resultStatus": row["result_status"],
+            "acceptedCount": row["accepted_count"],
+            "rejectedCount": row["rejected_count"],
+            "rejections": _load(row["rejection_json"], []),
+            "submittedAt": row["submitted_at"],
+            "createdAt": row["created_at"],
+        }
+
+    def create_extraction_submission(self, data: Mapping[str, Any]) -> dict[str, Any]:
+        now = utc_now()
+        submission_id = str(data.get("id") or new_id("submission"))
+        submitted_at = str(data.get("submittedAt") or now)
+        with self._db() as connection:
+            connection.execute(
+                "INSERT INTO extraction_submissions (id, city_id, source_id, artifact_id, agent_run_id,"
+                " agent_version, payload_json, result_status, accepted_count, rejected_count,"
+                " rejection_json, submitted_at, created_at)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    submission_id,
+                    data.get("cityId"),
+                    data.get("sourceId"),
+                    data.get("artifactId"),
+                    data.get("agentRunId"),
+                    data.get("agentVersion"),
+                    _dump(data.get("payload") or {}),
+                    str(data.get("resultStatus") or "accepted"),
+                    int(data.get("acceptedCount") or 0),
+                    int(data.get("rejectedCount") or 0),
+                    _dump(data.get("rejections") or []),
+                    submitted_at,
+                    now,
+                ),
+            )
+            row = connection.execute(
+                "SELECT * FROM extraction_submissions WHERE id = ?", (submission_id,)
+            ).fetchone()
+        return self._submission_dict(row)
+
+    def list_extraction_submissions(
+        self, *, city_id: str | None = None, limit: int | None = None
+    ) -> list[dict[str, Any]]:
+        where = " WHERE city_id = ?" if city_id is not None else ""
+        params: list[Any] = [city_id] if city_id is not None else []
+        sql = f"SELECT * FROM extraction_submissions{where} ORDER BY submitted_at DESC, id DESC"
+        if limit:
+            sql += " LIMIT ?"
+            params.append(int(limit))
+        with self._db() as connection:
+            rows = connection.execute(sql, params).fetchall()
+        return [self._submission_dict(row) for row in rows]

@@ -177,6 +177,96 @@ export type DataSourceInput = {
   note?: string | null;
 };
 
+/** 抽取难度分档，决定 WorkBuddy 的抽取预期与禁忌。 */
+export type FieldDifficulty = "A" | "B" | "C" | "D";
+
+export type FieldCatalogEntry = {
+  id: string;
+  name: string;
+  unit: string | null;
+  valueType: "number" | "string";
+  options: string[] | null;
+  block: string | null;
+  difficulty: FieldDifficulty;
+  neverEstimate: boolean;
+};
+
+export type CrawlTargetSource = {
+  sourceId: string;
+  name: string | null;
+  url: string | null;
+  status: DataSourceStatus;
+  lastFetchedAt: string | null;
+  lastChangeStatus: string | null;
+  lastArtifactId: string | null;
+  lastArtifactSha256: string | null;
+  fieldsToFill: string[];
+  alreadyFilled: string[];
+};
+
+export type CrawlTargetsResponse = {
+  generatedAt: string;
+  readScope: string;
+  fieldCatalog: FieldCatalogEntry[];
+  fieldFamilies: Array<{ family: string; queryTemplate: string; fields: string[]; sourceHint: string }>;
+  difficultyLevels: Record<FieldDifficulty, string>;
+  neverEstimateFields: string[];
+  cities: Array<{ cityId: string; cityName: string; sources: CrawlTargetSource[] }>;
+};
+
+/** 候选来源状态：API 侧新建默认 "candidate"，人工处理后转 promoted / rejected。 */
+export type SourceCandidateStatus = "candidate" | "promoted" | "rejected";
+
+/** AI 检索发现的候选来源，需人工确认后才转为正式 DataSource。 */
+export type SourceCandidate = {
+  id: string;
+  cityId: string;
+  name: string | null;
+  url: string;
+  domain: string | null;
+  title: string | null;
+  publishedAt: string | null;
+  summary: string | null;
+  targetFields: string[];
+  relevance: number | null;
+  origin: string;
+  status: SourceCandidateStatus;
+  promotedSourceId: string | null;
+  reviewedBy: string | null;
+  reviewedAt: string | null;
+  note: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type ExtractionSubmissionRecord = {
+  id: string;
+  cityId: string;
+  sourceId: string | null;
+  artifactId: string | null;
+  agentRunId: string | null;
+  agentVersion: string | null;
+  resultStatus: "accepted" | "partially_rejected" | "rejected";
+  acceptedCount: number;
+  rejectedCount: number;
+  rejections: Array<{ fieldId: string | null; reason: string; quote: string | null }>;
+  payload?: {
+    submissions?: unknown[];
+    accepted?: Array<{
+      fieldId: string;
+      value: number | string;
+      unit: string | null;
+      confidence: number | null;
+      quote: string | null;
+      effectiveDate: string | null;
+    }>;
+    notDisclosed?: string[];
+  };
+  submittedAt: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
 export function getPolicyOverview(cityIds: string[] = []) {
   const query = cityIds.length ? `?cityIds=${encodeURIComponent(cityIds.join(","))}` : "";
   return apiFetch<PolicyOverviewResponse>(`/api/policies/overview${query}`);
@@ -211,6 +301,73 @@ export function crawlPolicySource(sourceId: string) {
 
 export function listSourceArtifacts(sourceId: string) {
   return apiFetch<CrawlArtifact[]>(`/api/policies/sources/${encodeURIComponent(sourceId)}/artifacts`);
+}
+
+/** 派活清单：城市来源、增量待填字段、字段目录与检索提示。 */
+export function getCrawlTargets() {
+  return apiFetch<CrawlTargetsResponse>("/api/policies/crawl-targets");
+}
+
+export function listSourceCandidates(cityId?: string, status?: SourceCandidateStatus) {
+  const params = new URLSearchParams();
+  if (cityId) params.set("cityId", cityId);
+  if (status) params.set("status", status);
+  const query = params.toString();
+  return apiFetch<SourceCandidate[]>(`/api/policies/source-candidates${query ? `?${query}` : ""}`);
+}
+
+/** 人工确认：候选来源转为正式 DataSource，纳入后续抓取。 */
+export function promoteSourceCandidate(candidateId: string) {
+  return apiFetch<SourceCandidate>(`/api/policies/source-candidates/${encodeURIComponent(candidateId)}/promote`, {
+    method: "POST",
+  });
+}
+
+export function rejectSourceCandidate(candidateId: string, reason?: string) {
+  return apiFetch<SourceCandidate>(`/api/policies/source-candidates/${encodeURIComponent(candidateId)}/reject`, {
+    method: "POST",
+    body: JSON.stringify({ reason: reason ?? null }),
+  });
+}
+
+/** 回传审计记录：页面「上次 AI 抓取新增了多少」的数据来源。 */
+export function listExtractionSubmissions(cityId?: string, limit?: number) {
+  const params = new URLSearchParams();
+  if (cityId) params.set("cityId", cityId);
+  if (limit) params.set("limit", String(limit));
+  const query = params.toString();
+  return apiFetch<ExtractionSubmissionRecord[]>(`/api/policies/extraction-submissions${query ? `?${query}` : ""}`);
+}
+
+const DIFFICULTY_LABELS: Record<FieldDifficulty, string> = {
+  A: "A · 政策直读",
+  B: "B · 需归一化",
+  C: "C · 统计公报",
+  D: "D · 无公开数据",
+};
+
+export function difficultyLabel(difficulty: string): string {
+  return DIFFICULTY_LABELS[difficulty as FieldDifficulty] ?? difficulty;
+}
+
+const CANDIDATE_STATUS_LABELS: Record<SourceCandidateStatus, string> = {
+  candidate: "待确认",
+  promoted: "已转正",
+  rejected: "已驳回",
+};
+
+export function candidateStatusLabel(status: string): string {
+  return CANDIDATE_STATUS_LABELS[status as SourceCandidateStatus] ?? status;
+}
+
+const SUBMISSION_STATUS_LABELS: Record<ExtractionSubmissionRecord["resultStatus"], string> = {
+  accepted: "全部接收",
+  partially_rejected: "部分被拒",
+  rejected: "全部被拒",
+};
+
+export function submissionStatusLabel(status: string): string {
+  return SUBMISSION_STATUS_LABELS[status as ExtractionSubmissionRecord["resultStatus"]] ?? status;
 }
 
 export function getCrawlArtifactUrl(artifactId: string) {
