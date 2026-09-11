@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import csv
+import hmac
 import io
 import json
+import os
 import uuid
 import zipfile
 from dataclasses import fields, is_dataclass
@@ -25,15 +27,20 @@ from ..domain.u1.spec import (
     load_parameter_catalog,
 )
 from ..domain.dashboard.aggregator import build_dashboard_overview
+from ..domain.policy.agent_service import AgentSubmissionService, SubmissionError
 from ..domain.policy.service import CrawlServiceError, PolicyService
 from ..repository import ProjectRepository
 from .schemas import (
     DataSourceCreate,
     DataSourceUpdate,
+    ExtractionSubmissionRequest,
+    FetchRequestBatch,
     FieldValueUpdate,
     ProjectCreate,
     ScenarioCreate,
     ScenarioUpdate,
+    SourceCandidateBatch,
+    SourceCandidateReject,
 )
 
 
@@ -276,6 +283,150 @@ def crawl_artifact_content(artifact_id: str, request: Request) -> Response:
         media_type=artifact.get("contentType") or "application/octet-stream",
         headers={"Content-Disposition": f'inline; filename="{artifact_id}"'},
     )
+
+
+# ---------- WorkBuddy AI 回传链路（设计文档 8.5） ----------
+#
+# 职责边界：AI 检索与字段抽取由 WorkBuddy 执行；本服务只做确定性部分
+# —— 派活、抓取落档、回传校验、写建议值。
+# 回传类接口用静态 token 校验（UE_AGENT_AGENT_TOKEN），防止公网发布后裸奔。
+
+
+def _agent_token_required(request: Request) -> JSONResponse | None:
+    """校验 WorkBuddy 回传凭证。未配置 token 时（本地开发）放行。"""
+    expected = os.getenv("UE_AGENT_AGENT_TOKEN", "").strip()
+    if not expected:
+        return None
+    provided = (
+        request.headers.get("x-ue-agent-token")
+        or request.headers.get("authorization", "").removeprefix("Bearer ").strip()
+    )
+    if not hmac.compare_digest(provided, expected):
+        return JSONResponse(
+            status_code=401,
+            content={"error": {"code": "UNAUTHORIZED", "message": "回传凭证无效或缺失"}},
+        )
+    return None
+
+
+def _agent_service(request: Request) -> AgentSubmissionService:
+    return AgentSubmissionService(repository_from_request(request))
+
+
+@router.get("/policies/crawl-targets", response_model=None)
+def policy_crawl_targets(request: Request) -> dict[str, Any]:
+    """派活：给 WorkBuddy 的待办清单（已配置来源 + 增量感知的待填字段）。"""
+    return _agent_service(request).crawl_targets(load_parameter_catalog())
+
+
+@router.post("/policies/fetch-requests", response_model=None)
+def policy_fetch_requests(payload: FetchRequestBatch, request: Request) -> dict[str, Any] | JSONResponse:
+    """WorkBuddy 声明要读的 URL，由服务端抓取落档并回传正文文本。
+
+    复用现有抓取链路（SSRF 防护、原文存档、SHA256 变更检测），
+    使「AI 决定读什么」与「存档与变更检测」两者兼得。
+    """
+    unauthorized = _agent_token_required(request)
+    if unauthorized is not None:
+        return unauthorized
+    service = PolicyService(repository_from_request(request))
+    service.crawl_allow_private = _crawl_allow_private(request)
+    results = service.fetch_for_agent(
+        requests=[item.model_dump() for item in payload.requests],
+        raw_dir=_raw_sources_dir(request),
+        max_chars=payload.maxChars or 40000,
+    )
+    return {
+        "fetchedAt": datetime.now(timezone.utc).isoformat(),
+        "requested": len(payload.requests),
+        "succeeded": sum(1 for item in results if item.get("status") == "success"),
+        "failed": sum(1 for item in results if item.get("status") == "failed"),
+        "unchanged": sum(1 for item in results if item.get("changeStatus") == "unchanged"),
+        "results": results,
+    }
+
+
+@router.post("/policies/extraction-submissions", response_model=None)
+def policy_extraction_submissions(
+    payload: ExtractionSubmissionRequest, request: Request
+) -> dict[str, Any] | JSONResponse:
+    """接收 WorkBuddy 的字段抽取结果，逐条校验后写入灰色建议值。"""
+    unauthorized = _agent_token_required(request)
+    if unauthorized is not None:
+        return unauthorized
+    try:
+        return _agent_service(request).submit_extraction(
+            city_id=payload.cityId,
+            catalog=load_parameter_catalog(),
+            submissions=[item.model_dump() for item in payload.submissions],
+            agent_run_id=payload.agentRunId,
+            agent_version=payload.agentVersion,
+        )
+    except SubmissionError as error:
+        return JSONResponse(
+            status_code=error.status_code,
+            content={"error": {"code": error.code, "message": error.message}},
+        )
+
+
+@router.post("/policies/source-candidates", status_code=201, response_model=None)
+def create_source_candidates(
+    payload: SourceCandidateBatch, request: Request
+) -> dict[str, Any] | JSONResponse:
+    """AI 检索发现的候选来源入池（不直接转为正式来源，需人工确认）。"""
+    unauthorized = _agent_token_required(request)
+    if unauthorized is not None:
+        return unauthorized
+    try:
+        return _agent_service(request).submit_candidate_sources(
+            city_id=payload.cityId,
+            candidates=[item.model_dump() for item in payload.candidates],
+        )
+    except SubmissionError as error:
+        return JSONResponse(
+            status_code=error.status_code,
+            content={"error": {"code": error.code, "message": error.message}},
+        )
+
+
+@router.get("/policies/source-candidates", response_model=None)
+def list_source_candidates(
+    request: Request, cityId: str | None = None, status: str | None = None
+) -> list[dict[str, Any]]:
+    return repository_from_request(request).list_candidate_sources(city_id=cityId, status=status)
+
+
+@router.post("/policies/source-candidates/{candidate_id}/promote", response_model=None)
+def promote_source_candidate(candidate_id: str, request: Request) -> dict[str, Any] | JSONResponse:
+    """人工确认：候选来源转为正式 DataSource，纳入后续抓取。"""
+    try:
+        return _agent_service(request).promote_candidate_source(candidate_id)
+    except SubmissionError as error:
+        return JSONResponse(
+            status_code=error.status_code,
+            content={"error": {"code": error.code, "message": error.message}},
+        )
+
+
+@router.post("/policies/source-candidates/{candidate_id}/reject", response_model=None)
+def reject_source_candidate(
+    candidate_id: str, payload: SourceCandidateReject, request: Request
+) -> dict[str, Any] | JSONResponse:
+    try:
+        return _agent_service(request).reject_candidate_source(candidate_id, payload.reason)
+    except SubmissionError as error:
+        return JSONResponse(
+            status_code=error.status_code,
+            content={"error": {"code": error.code, "message": error.message}},
+        )
+
+
+@router.get("/policies/extraction-submissions", response_model=None)
+def list_extraction_submissions(
+    request: Request, cityId: str | None = None, limit: int | None = None
+) -> list[dict[str, Any]]:
+    """回传审计记录：供页面展示「上次 AI 抓取新增了多少候选值」。"""
+    return repository_from_request(request).list_extraction_submissions(city_id=cityId, limit=limit)
 
 
 @router.get("/policies/documents", response_model=None)

@@ -171,6 +171,157 @@ class PolicyService:
         artifact["suggestions"] = suggestions
         return artifact
 
+    def fetch_for_agent(
+        self, *, requests: Sequence[Mapping[str, Any]], raw_dir: Path, max_chars: int = 40000
+    ) -> list[dict[str, Any]]:
+        """为 WorkBuddy 抓取正文（WorkBuddy 驱动架构，见设计文档 8.4）。
+
+        与 `crawl_source_now` 共用同一条抓取链路（SSRF 防护、原文存档、SHA256 变更检测），
+        区别在于：本方法**不做正则解析、不写建议值** —— 解析交给 WorkBuddy，
+        只把正文文本与变更状态回传，让上游决定是否值得调用模型。
+
+        `changeStatus == "unchanged"` 时 `text` 仍会返回，但上游据此跳过抽取即可省下 AI 成本。
+        """
+        results: list[dict[str, Any]] = []
+        for request in requests:
+            url = str(request.get("url") or "").strip()
+            city_id = str(request.get("cityId") or "").strip()
+            source_id = request.get("sourceId")
+            name = request.get("name")
+            if not url:
+                results.append({"url": None, "status": "failed", "errorMessage": "缺少 url"})
+                continue
+
+            # 若给了 sourceId，沿用其超时/大小配置与状态校验。
+            source: dict[str, Any] | None = None
+            if source_id:
+                try:
+                    source = self.repository.update_data_source(str(source_id), {})
+                except KeyError:
+                    source = None
+
+            if source is not None and source.get("status") == "paused":
+                results.append(
+                    {
+                        "url": url,
+                        "sourceId": source_id,
+                        "status": "skipped",
+                        "errorMessage": "该官网来源已停用，请先启用",
+                    }
+                )
+                continue
+
+            previous_success: dict[str, Any] | None = None
+            if source_id:
+                previous_success = next(
+                    (
+                        artifact
+                        for artifact in reversed(
+                            self.repository.list_crawl_artifacts(source_id=str(source_id))
+                        )
+                        if artifact.get("status") == "success"
+                    ),
+                    None,
+                )
+
+            timeout = int((source or {}).get("timeoutSeconds") or 0) or None
+            max_bytes = int((source or {}).get("maxBytes") or 0) or None
+            try:
+                result = crawl_source(
+                    url,
+                    raw_dir,
+                    timeout_seconds=timeout,
+                    max_bytes=max_bytes,
+                    allow_private=self.crawl_allow_private,
+                )
+            except CrawlError as error:
+                if source_id and city_id:
+                    self.repository.create_crawl_artifact(
+                        {
+                            "sourceId": str(source_id),
+                            "cityId": city_id,
+                            "requestedUrl": url,
+                            "finalUrl": None,
+                            "httpStatus": None,
+                            "contentType": None,
+                            "contentLength": None,
+                            "sha256": None,
+                            "storedPath": None,
+                            "title": None,
+                            "changeStatus": None,
+                            "status": "failed",
+                            "errorMessage": str(error),
+                        }
+                    )
+                    self.repository.update_data_source(str(source_id), {"status": "error"})
+                results.append(
+                    {
+                        "url": url,
+                        "sourceId": source_id,
+                        "status": "failed",
+                        "errorMessage": str(error),
+                    }
+                )
+                continue
+
+            if previous_success is None:
+                change_status = "first_fetch"
+            elif previous_success.get("sha256") == result.sha256:
+                change_status = "unchanged"
+            else:
+                change_status = "new_version"
+
+            artifact: dict[str, Any] = {
+                "artifactId": new_id("artifact"),
+                "requestedUrl": result.requested_url,
+                "finalUrl": result.final_url,
+                "httpStatus": result.http_status,
+                "contentType": result.content_type,
+                "contentLength": result.content_length,
+                "sha256": result.sha256,
+                "storedPath": result.stored_path,
+                "title": result.title,
+                "changeStatus": change_status,
+                "status": "success",
+                "errorMessage": None,
+            }
+            if source_id and city_id:
+                artifact = self.repository.create_crawl_artifact(
+                    {"sourceId": str(source_id), "cityId": city_id, **artifact}
+                )
+                self.repository.update_data_source(
+                    str(source_id),
+                    {
+                        "status": "active",
+                        "lastFetchedAt": artifact["fetchedAt"],
+                        "lastHttpStatus": result.http_status,
+                        "lastChangeStatus": change_status,
+                    },
+                )
+
+            readable = extract_readable_text(result.raw_content, result.content_type)
+            text = (readable or "")[:max_chars] or None
+            results.append(
+                {
+                    "url": result.final_url,
+                    "requestedUrl": result.requested_url,
+                    "sourceId": source_id,
+                    "sourceName": name,
+                    "artifactId": artifact.get("artifactId"),
+                    "title": result.title,
+                    "sha256": result.sha256,
+                    "httpStatus": result.http_status,
+                    "contentType": result.content_type,
+                    "changeStatus": change_status,
+                    "text": text,
+                    "textTruncated": bool(readable and len(readable) > max_chars),
+                    "textLength": len(readable) if readable else 0,
+                    "status": "success",
+                    "errorMessage": None,
+                }
+            )
+        return results
+
     def upload_document(
         self,
         *,
