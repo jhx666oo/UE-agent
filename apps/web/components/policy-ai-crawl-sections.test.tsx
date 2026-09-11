@@ -108,6 +108,27 @@ describe("PolicyCrawlStatusSection", () => {
     expect(screen.getByText(/上一轮被拒 1 条/)).toBeTruthy();
   });
 
+  it("同一城市多个来源不重复计数待填字段（取并集而非累加）", () => {
+    const twoSources: CrawlTargetsResponse = {
+      ...targets,
+      cities: [
+        {
+          cityId: "changsha",
+          cityName: "长沙",
+          sources: [
+            { ...targets.cities[0].sources[0], sourceId: "source-1", fieldsToFill: ["P1", "C2"] },
+            { ...targets.cities[0].sources[0], sourceId: "source-2", fieldsToFill: ["P1", "C2", "C6"] },
+          ],
+        },
+      ],
+    };
+    render(
+      <PolicyCrawlStatusSection targets={twoSources} submissions={[]} loading={false} error={null} />,
+    );
+    // 并集为 P1/C2/C6 共 3 个；若按来源累加会错误地显示 5 个
+    expect(screen.getByText("3 个 / 共 3 个自动爬虫字段")).toBeTruthy();
+  });
+
   it("无记录时显示尚无记录并给出采用提示", () => {
     render(<PolicyCrawlStatusSection targets={targets} submissions={[]} loading={false} error={null} />);
     expect(screen.getByText("尚无记录")).toBeTruthy();

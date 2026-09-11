@@ -75,10 +75,15 @@ export function PolicyCrawlStatusSection({
   onRetry?: () => void;
 }>) {
   const latest = submissions[0];
-  const totalToFill = (targets?.cities ?? []).reduce(
-    (sum, city) => sum + city.sources.reduce((acc, source) => acc + source.fieldsToFill.length, 0),
-    0,
-  );
+  // fieldsToFill 是「城市级」集合：同一城市的每个来源都会列出同一批待填字段。
+  // 因此必须先对城市内各来源取并集，再跨城市求和 —— 直接累加会把同一字段重复计数。
+  const totalToFill = (targets?.cities ?? []).reduce((sum, city) => {
+    const pending = new Set<string>();
+    for (const source of city.sources) {
+      for (const fieldId of source.fieldsToFill) pending.add(fieldId);
+    }
+    return sum + pending.size;
+  }, 0);
   const catalogSize = targets?.fieldCatalog.length ?? 0;
 
   return (
