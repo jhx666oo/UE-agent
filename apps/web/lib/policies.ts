@@ -299,6 +299,67 @@ export function crawlPolicySource(sourceId: string) {
   return apiFetch<CrawlArtifact>(`/api/policies/sources/${encodeURIComponent(sourceId)}/crawl`, { method: "POST" });
 }
 
+/** 一键全部抓取的单条结果。 */
+export type CrawlAllItem = {
+  sourceId: string;
+  name: string | null;
+  status: "success" | "failed" | "skipped";
+  changeStatus: "first_fetch" | "unchanged" | "new_version" | null;
+  httpStatus: number | null;
+  message: string | null;
+};
+
+export type CrawlAllSummary = {
+  cityId: string;
+  crawledAt: string;
+  total: number;
+  succeeded: number;
+  failed: number;
+  skipped: number;
+  unchanged: number;
+  changed: number;
+  results: CrawlAllItem[];
+};
+
+/** 一键抓取该城市所有「启用」来源（顺序执行，单条失败不中断整批）。 */
+export function crawlAllPolicySources(cityId: string) {
+  return apiFetch<CrawlAllSummary>(`/api/policies/cities/${encodeURIComponent(cityId)}/crawl-all`, {
+    method: "POST",
+  });
+}
+
+/** 来源新鲜度等级：stale=疑似过期（年度文档长期无更新）、aging=长期未变、unknown=还没抓过。 */
+export type SourceFreshnessLevel = "ok" | "aging" | "stale" | "unknown";
+
+export type SourceFreshness = {
+  sourceId: string;
+  name: string | null;
+  url: string | null;
+  status: DataSourceStatus;
+  lastFetchedAt: string | null;
+  lastContentChangedAt: string | null;
+  daysSinceChange: number | null;
+  looksAnnual: boolean;
+  level: SourceFreshnessLevel;
+  reason: string | null;
+};
+
+export type SourceFreshnessReport = {
+  cityId: string;
+  checkedAt: string;
+  staleDays: number;
+  agingDays: number;
+  counts: { total: number; stale: number; aging: number; unknown: number };
+  sources: SourceFreshness[];
+};
+
+/** 来源新鲜度体检：找出可能已过期的年度文档，提醒去找新年度版本。 */
+export function getSourceFreshness(cityId: string) {
+  return apiFetch<SourceFreshnessReport>(
+    `/api/policies/cities/${encodeURIComponent(cityId)}/source-freshness`,
+  );
+}
+
 export function listSourceArtifacts(sourceId: string) {
   return apiFetch<CrawlArtifact[]>(`/api/policies/sources/${encodeURIComponent(sourceId)}/artifacts`);
 }

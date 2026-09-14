@@ -5,6 +5,7 @@ import hmac
 import io
 import json
 import os
+import re
 import uuid
 import zipfile
 from dataclasses import fields, is_dataclass
@@ -202,6 +203,95 @@ def list_policy_sources(request: Request, cityId: str | None = None) -> list[dic
     return repository_from_request(request).list_data_sources(cityId)
 
 
+# ---------- 来源新鲜度（防「静默过期」） ----------
+#
+# 背景：SHA256 变更检测只能回答「这一页变了吗」，回答不了「有没有更新的页」。
+# 年度文档（如「长沙市2025年统计公报」）每年换一个新 URL，固定 URL 的来源
+# 会逐轮返回 unchanged，页面上看起来一切正常，实际永远停在旧版本。
+# 这里用「自上次实质内容变更以来的天数」把这个风险量化出来。
+
+SOURCE_STALE_DAYS = int(os.getenv("UE_AGENT_STALE_DAYS", "365"))
+SOURCE_AGING_DAYS = int(os.getenv("UE_AGENT_AGING_DAYS", "180"))
+_YEAR_PATTERN = re.compile(r"20\d{2}")
+
+
+def _source_freshness(repository: ProjectRepository, source: Mapping[str, Any]) -> dict[str, Any]:
+    """算单个来源的新鲜度。
+
+    只把 changeStatus 为 first_fetch / new_version 的抓取视为「实质内容变更」——
+    后面连续 unchanged 都说明页面没动，但**不代表没过期**。
+    """
+    artifacts = repository.list_crawl_artifacts(source_id=str(source.get("id")))
+    changed_at = [
+        str(item.get("fetchedAt"))
+        for item in artifacts
+        if item.get("changeStatus") in ("first_fetch", "new_version") and item.get("fetchedAt")
+    ]
+    last_changed_at = max(changed_at) if changed_at else None
+
+    days: int | None = None
+    if last_changed_at:
+        try:
+            moment = datetime.fromisoformat(last_changed_at.replace("Z", "+00:00"))
+            if moment.tzinfo is None:
+                moment = moment.replace(tzinfo=timezone.utc)
+            days = max(0, int((datetime.now(timezone.utc) - moment).total_seconds() // 86400))
+        except ValueError:
+            days = None
+
+    # 名称或 URL 里带年份 → 大概率是「年度文档」，跨年就该换新链接
+    looks_annual = bool(_YEAR_PATTERN.search(f"{source.get('name') or ''} {source.get('url') or ''}"))
+
+    if days is None:
+        level, reason = "unknown", "暂无抓取记录"
+    elif looks_annual and days >= SOURCE_STALE_DAYS:
+        level, reason = "stale", f"年度文档已 {days} 天无内容变更，可能已有新年度版本"
+    elif days >= SOURCE_STALE_DAYS:
+        level, reason = "aging", f"已 {days} 天无内容变更，建议确认是否仍有效"
+    elif days >= SOURCE_AGING_DAYS:
+        level, reason = "aging", f"已 {days} 天无内容变更"
+    else:
+        level, reason = "ok", None
+
+    return {
+        "sourceId": source.get("id"),
+        "name": source.get("name"),
+        "url": source.get("url"),
+        "status": source.get("status"),
+        "lastFetchedAt": source.get("lastFetchedAt"),
+        "lastContentChangedAt": last_changed_at,
+        "daysSinceChange": days,
+        "looksAnnual": looks_annual,
+        "level": level,
+        "reason": reason,
+    }
+
+
+@router.get("/policies/cities/{city_id}/source-freshness", response_model=None)
+def city_source_freshness(city_id: str, request: Request) -> dict[str, Any]:
+    """城市级来源新鲜度体检：谁可能已经过期，需要去找新年度版本。"""
+    repository = repository_from_request(request)
+    items = [
+        _source_freshness(repository, source)
+        for source in repository.list_data_sources()
+        if str(source.get("cityId") or "") == city_id
+    ]
+    items.sort(key=lambda item: (item["level"] != "stale", -(item["daysSinceChange"] or 0)))
+    return {
+        "cityId": city_id,
+        "checkedAt": datetime.now(timezone.utc).isoformat(),
+        "staleDays": SOURCE_STALE_DAYS,
+        "agingDays": SOURCE_AGING_DAYS,
+        "counts": {
+            "total": len(items),
+            "stale": sum(1 for item in items if item["level"] == "stale"),
+            "aging": sum(1 for item in items if item["level"] == "aging"),
+            "unknown": sum(1 for item in items if item["level"] == "unknown"),
+        },
+        "sources": items,
+    }
+
+
 @router.post("/policies/sources", status_code=201)
 def create_policy_source(payload: DataSourceCreate, request: Request) -> dict[str, Any]:
     return repository_from_request(request).create_data_source(payload.model_dump())
@@ -241,6 +331,78 @@ def crawl_policy_source(source_id: str, request: Request) -> dict[str, Any] | JS
             status_code=error.status_code,
             content={"error": {"code": error.code, "message": error.message}},
         )
+
+
+@router.post("/policies/cities/{city_id}/crawl-all", response_model=None)
+def crawl_all_policy_sources(city_id: str, request: Request) -> dict[str, Any]:
+    """一键抓取该城市所有「启用」来源（顺序执行，逐条返回结果）。
+
+    单个来源失败不中断整批 —— 只记录该条失败原因，其余照常抓取，
+    这样一次点击就能拿到全量新鲜度，而不是逐个点按钮。
+    已停用（paused）的来源会被跳过并标注原因。
+    """
+    repository = repository_from_request(request)
+    service = PolicyService(repository)
+    service.crawl_allow_private = _crawl_allow_private(request)
+    raw_dir = _raw_sources_dir(request)
+
+    results: list[dict[str, Any]] = []
+    for source in repository.list_data_sources():
+        if str(source.get("cityId") or "") != city_id:
+            continue
+        source_id = str(source.get("id"))
+        name = source.get("name")
+        if str(source.get("status") or "") == "paused":
+            results.append(
+                {
+                    "sourceId": source_id,
+                    "name": name,
+                    "status": "skipped",
+                    "changeStatus": None,
+                    "httpStatus": None,
+                    "message": "来源已停用，未抓取",
+                }
+            )
+            continue
+        try:
+            artifact = service.crawl_source_now(source_id, raw_dir=raw_dir)
+        except CrawlServiceError as error:
+            results.append(
+                {
+                    "sourceId": source_id,
+                    "name": name,
+                    "status": "failed",
+                    "changeStatus": None,
+                    "httpStatus": None,
+                    "message": error.message,
+                }
+            )
+            continue
+        results.append(
+            {
+                "sourceId": source_id,
+                "name": name,
+                "status": "success",
+                "changeStatus": artifact.get("changeStatus"),
+                "httpStatus": artifact.get("httpStatus"),
+                "message": None,
+            }
+        )
+
+    return {
+        "cityId": city_id,
+        "crawledAt": datetime.now(timezone.utc).isoformat(),
+        "total": len(results),
+        "succeeded": sum(1 for item in results if item["status"] == "success"),
+        "failed": sum(1 for item in results if item["status"] == "failed"),
+        "skipped": sum(1 for item in results if item["status"] == "skipped"),
+        # 未变 / 有更新 直接对应「省下的抽取量」与「值得送 AI 的量」
+        "unchanged": sum(1 for item in results if item.get("changeStatus") == "unchanged"),
+        "changed": sum(
+            1 for item in results if item.get("changeStatus") in ("first_fetch", "new_version")
+        ),
+        "results": results,
+    }
 
 
 @router.get("/policies/sources/{source_id}/artifacts", response_model=None)

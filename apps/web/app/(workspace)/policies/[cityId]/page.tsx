@@ -14,9 +14,11 @@ import {
 } from "@/components/policy-ai-crawl-sections";
 import {
   createPolicySource,
+  crawlAllPolicySources,
   crawlPolicySource,
   getCrawlTargets,
   getPolicyCityDetail,
+  getSourceFreshness,
   listExtractionSubmissions,
   listPolicySources,
   listSourceArtifacts,
@@ -30,6 +32,7 @@ import {
   type ExtractionSubmissionRecord,
   type PolicyCityDetailResponse,
   type SourceCandidate,
+  type SourceFreshnessReport,
 } from "@/lib/policies";
 
 export default function PolicyCityPage() {
@@ -41,6 +44,7 @@ export default function PolicyCityPage() {
   const [targets, setTargets] = useState<CrawlTargetsResponse | undefined>();
   const [candidates, setCandidates] = useState<SourceCandidate[]>([]);
   const [submissions, setSubmissions] = useState<ExtractionSubmissionRecord[]>([]);
+  const [freshness, setFreshness] = useState<SourceFreshnessReport | undefined>();
   const [aiLoading, setAiLoading] = useState(true);
   const [aiError, setAiError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -59,15 +63,18 @@ export default function PolicyCityPage() {
 
   /** AI 抓取相关的三个区块单独加载：任一失败不应拖垮整页。供按钮触发。 */
   const loadAiSections = useCallback(async () => {
-    const [targetsResult, candidatesResult, submissionsResult] = await Promise.allSettled([
-      getCrawlTargets(),
-      listSourceCandidates(cityId),
-      listExtractionSubmissions(cityId, 10),
-    ]);
+    const [targetsResult, candidatesResult, submissionsResult, freshnessResult] =
+      await Promise.allSettled([
+        getCrawlTargets(),
+        listSourceCandidates(cityId),
+        listExtractionSubmissions(cityId, 10),
+        getSourceFreshness(cityId),
+      ]);
     if (targetsResult.status === "fulfilled") setTargets(targetsResult.value);
     if (candidatesResult.status === "fulfilled") setCandidates(candidatesResult.value);
     if (submissionsResult.status === "fulfilled") setSubmissions(submissionsResult.value);
-    const failure = [targetsResult, candidatesResult, submissionsResult].find(
+    if (freshnessResult.status === "fulfilled") setFreshness(freshnessResult.value);
+    const failure = [targetsResult, candidatesResult, submissionsResult, freshnessResult].find(
       (item) => item.status === "rejected",
     );
     setAiError(
@@ -103,13 +110,19 @@ export default function PolicyCityPage() {
 
   useEffect(() => {
     let active = true;
-    Promise.allSettled([getCrawlTargets(), listSourceCandidates(cityId), listExtractionSubmissions(cityId, 10)])
-      .then(([targetsResult, candidatesResult, submissionsResult]) => {
+    Promise.allSettled([
+      getCrawlTargets(),
+      listSourceCandidates(cityId),
+      listExtractionSubmissions(cityId, 10),
+      getSourceFreshness(cityId),
+    ])
+      .then(([targetsResult, candidatesResult, submissionsResult, freshnessResult]) => {
         if (!active) return;
         if (targetsResult.status === "fulfilled") setTargets(targetsResult.value);
         if (candidatesResult.status === "fulfilled") setCandidates(candidatesResult.value);
         if (submissionsResult.status === "fulfilled") setSubmissions(submissionsResult.value);
-        const failure = [targetsResult, candidatesResult, submissionsResult].find(
+        if (freshnessResult.status === "fulfilled") setFreshness(freshnessResult.value);
+        const failure = [targetsResult, candidatesResult, submissionsResult, freshnessResult].find(
           (item) => item.status === "rejected",
         );
         setAiError(
@@ -148,6 +161,13 @@ export default function PolicyCityPage() {
     await crawlPolicySource(source.id);
     await load();
     await loadAiSections();
+  }
+
+  /** 一键抓取全部启用来源：抓完刷新来源列表与 AI 区块，并把摘要交给组件展示。 */
+  async function handleCrawlAll() {
+    const summary = await crawlAllPolicySources(cityId);
+    await Promise.all([load(), loadAiSections()]);
+    return summary;
   }
 
   async function handlePromoteCandidate(candidate: SourceCandidate) {
@@ -199,6 +219,8 @@ export default function PolicyCityPage() {
         onCreateSource={handleCreateSource}
         onToggleSource={handleToggleSource}
         onCrawl={handleCrawl}
+        onCrawlAll={handleCrawlAll}
+        freshness={freshness}
       />
       <PolicySourceCandidateSection
         candidates={candidates}

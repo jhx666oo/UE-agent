@@ -2,7 +2,7 @@
 
 import React, { useState } from "react";
 import Link from "next/link";
-import { IconArrowLeft, IconExternalLink, IconPlayerPlay, IconPlus } from "@tabler/icons-react";
+import { IconArrowLeft, IconBolt, IconExternalLink, IconPlayerPlay, IconPlus } from "@tabler/icons-react";
 import { Badge } from "@ue-agent/ui/components/badge";
 import { Button } from "@ue-agent/ui/components/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@ue-agent/ui/components/card";
@@ -12,9 +12,11 @@ import { PageHeader } from "@/components/page-header";
 import {
   formatPolicyDate,
   getCrawlArtifactUrl,
+  type CrawlAllSummary,
   type CrawlArtifact,
   type DataSource,
   type PolicyCityDetailResponse,
+  type SourceFreshnessReport,
 } from "@/lib/policies";
 
 const SOURCE_STATUS: Record<DataSource["status"], { label: string; variant: "success" | "warning" | "danger" }> = {
@@ -29,6 +31,9 @@ const CHANGE_LABELS: Record<string, string> = {
   new_version: "发现新版本",
 };
 
+/** 抓取历史默认只展示最新这么多条 —— 来源一多，几十条历史会把页面撑得很长。 */
+const HISTORY_PREVIEW_LIMIT = 20;
+
 export function PolicyCityDetail({
   data,
   sources,
@@ -36,6 +41,8 @@ export function PolicyCityDetail({
   onCreateSource,
   onToggleSource,
   onCrawl,
+  onCrawlAll,
+  freshness,
 }: Readonly<{
   data: PolicyCityDetailResponse;
   sources: DataSource[];
@@ -43,12 +50,52 @@ export function PolicyCityDetail({
   onCreateSource?: (input: { name: string; url: string }) => Promise<void>;
   onToggleSource?: (source: DataSource) => Promise<void>;
   onCrawl?: (source: DataSource) => Promise<void>;
+  onCrawlAll?: () => Promise<CrawlAllSummary | void>;
+  freshness?: SourceFreshnessReport;
 }>) {
   const [newName, setNewName] = useState("");
   const [newUrl, setNewUrl] = useState("");
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
   const [crawlingSourceId, setCrawlingSourceId] = useState<string | null>(null);
+  const [crawlingAll, setCrawlingAll] = useState(false);
+  const [crawlAllSummary, setCrawlAllSummary] = useState<CrawlAllSummary | null>(null);
+  const [historyExpanded, setHistoryExpanded] = useState(false);
+
+  async function crawlAll() {
+    if (!onCrawlAll) return;
+    setCrawlingAll(true);
+    setCrawlAllSummary(null);
+    try {
+      const summary = await onCrawlAll();
+      if (summary) setCrawlAllSummary(summary);
+    } finally {
+      setCrawlingAll(false);
+    }
+  }
+
+  /** 「全部抓取」只覆盖启用中的来源 —— 停用的会被后端跳过。 */
+  const activeSourceCount = sources.filter((source) => source.status !== "paused").length;
+
+  const freshnessBySource = new Map(
+    (freshness?.sources ?? []).map((item) => [item.sourceId, item] as const),
+  );
+
+  /** 抓取历史按时间倒序（最新在前），默认只渲染最新 30 条。 */
+  const orderedArtifacts = [...artifacts].reverse();
+  const visibleArtifacts = historyExpanded
+    ? orderedArtifacts
+    : orderedArtifacts.slice(0, HISTORY_PREVIEW_LIMIT);
+  const hiddenArtifactCount = orderedArtifacts.length - visibleArtifacts.length;
+
+  /** 疑似过期 / 长期未变的来源在列表里挂一个警示徽标。 */
+  function freshnessBadge(sourceId: string) {
+    const item = freshnessBySource.get(sourceId);
+    if (!item || item.level === "ok" || item.level === "unknown") return null;
+    return (
+      <Badge variant="warning">{item.level === "stale" ? "疑似过期" : "长期未变"}</Badge>
+    );
+  }
 
   async function submitSource() {
     if (!onCreateSource) return;
@@ -90,10 +137,80 @@ export function PolicyCityDetail({
 
       <Card>
         <CardHeader>
-          <CardTitle>官网来源</CardTitle>
-          <p className="text-sm text-muted-foreground">只抓取公开页面；本机地址、私有网段和非 HTTP 协议会被拒绝。</p>
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div className="space-y-1.5">
+              <CardTitle>官网来源</CardTitle>
+              <p className="text-sm text-muted-foreground">只抓取公开页面；本机地址、私有网段和非 HTTP 协议会被拒绝。</p>
+            </div>
+            <Button
+              size="sm"
+              onClick={() => void crawlAll()}
+              disabled={!onCrawlAll || crawlingAll || activeSourceCount === 0}
+            >
+              <IconBolt size={15} stroke={1.75} />
+              {crawlingAll ? `抓取中…（${activeSourceCount} 个）` : `全部抓取（${activeSourceCount}）`}
+            </Button>
+          </div>
         </CardHeader>
         <CardContent className="space-y-4">
+          {crawlAllSummary ? (
+            <div className="space-y-2 rounded-md border border-border bg-surface-subtle p-3">
+              <p className="text-sm">
+                全部抓取完成：成功 <span className="font-medium">{crawlAllSummary.succeeded}</span> · 失败{" "}
+                <span className="font-medium">{crawlAllSummary.failed}</span>
+                {crawlAllSummary.skipped > 0 ? ` · 跳过 ${crawlAllSummary.skipped}` : ""} · 未变{" "}
+                <span className="font-medium">{crawlAllSummary.unchanged}</span> · 有更新{" "}
+                <span className="font-medium">{crawlAllSummary.changed}</span>
+              </p>
+              <p className="text-xs text-muted-foreground">
+                共 {crawlAllSummary.total} 个来源，{formatPolicyDate(crawlAllSummary.crawledAt)}。
+                「有更新」的正文才值得再跑一轮 AI 抽取；「未变」的会直接跳过。
+              </p>
+              {crawlAllSummary.results.some((item) => item.status !== "success") ? (
+                <ul className="space-y-1">
+                  {crawlAllSummary.results
+                    .filter((item) => item.status !== "success")
+                    .slice(0, 6)
+                    .map((item) => (
+                      <li key={item.sourceId} className="text-xs text-warning">
+                        {item.name ?? item.sourceId}：{item.message ?? item.status}
+                      </li>
+                    ))}
+                </ul>
+              ) : null}
+            </div>
+          ) : null}
+          {freshness ? (
+            freshness.counts.stale > 0 || freshness.counts.aging > 0 ? (
+              <div className="space-y-2 rounded-md border border-warning/40 bg-warning-subtle p-3">
+                <p className="text-sm font-medium text-warning">
+                  来源新鲜度体检：
+                  {freshness.counts.stale > 0 ? `${freshness.counts.stale} 个疑似过期` : ""}
+                  {freshness.counts.stale > 0 && freshness.counts.aging > 0 ? " · " : ""}
+                  {freshness.counts.aging > 0 ? `${freshness.counts.aging} 个长期未变` : ""}
+                </p>
+                <ul className="space-y-1">
+                  {freshness.sources
+                    .filter((item) => item.level === "stale" || item.level === "aging")
+                    .slice(0, 6)
+                    .map((item) => (
+                      <li key={item.sourceId} className="text-xs text-warning">
+                        {item.name ?? item.sourceId}：{item.reason}
+                      </li>
+                    ))}
+                </ul>
+                <p className="text-xs text-muted-foreground">
+                  年度文档每年换新链接，旧来源不会「变」，只会安静地停在旧版本 ——
+                  所以要按「超过 {freshness.staleDays} 天无内容变更 + 名称带年份」来告警。
+                </p>
+              </div>
+            ) : (
+              <p className="text-xs text-muted-foreground">
+                来源新鲜度体检通过：{freshness.counts.total} 个来源均未超过 {freshness.staleDays}{" "}
+                天无内容变更。
+              </p>
+            )
+          ) : null}
           {sources.length === 0 ? (
             <p className="text-sm text-muted-foreground">尚未配置官网来源。填写名称和链接后点击新增来源。</p>
           ) : (
@@ -106,6 +223,7 @@ export function PolicyCityDetail({
                       <div className="flex items-center gap-2">
                         <p className="truncate text-sm font-medium">{source.name}</p>
                         <Badge variant={status.variant}>{status.label}</Badge>
+                        {freshnessBadge(source.id)}
                       </div>
                       <p className="mt-1 truncate text-xs text-muted-foreground">
                         {source.url ?? "未配置链接"}
@@ -163,7 +281,8 @@ export function PolicyCityDetail({
           {artifacts.length === 0 ? (
             <p className="text-sm text-muted-foreground">暂无抓取记录。配置来源后点击「立即抓取」。</p>
           ) : (
-            [...artifacts].reverse().map((artifact) => (
+            <div className="max-h-[520px] space-y-3 overflow-y-auto rounded-xl border border-border p-3">
+              {visibleArtifacts.map((artifact) => (
               <div key={artifact.artifactId} className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-border p-3">
                 <div className="min-w-0">
                   <div className="flex flex-wrap items-center gap-2">
@@ -200,8 +319,24 @@ export function PolicyCityDetail({
                   </a>
                 ) : null}
               </div>
-            ))
+              ))}
+            </div>
           )}
+
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <p className="text-xs text-muted-foreground">
+              共 {orderedArtifacts.length} 条记录
+              {hiddenArtifactCount > 0
+                ? `，当前只显示最新 ${HISTORY_PREVIEW_LIMIT} 条`
+                : "，已全部显示"}
+              ，可在框内独立滚动
+            </p>
+            {hiddenArtifactCount > 0 || historyExpanded ? (
+              <Button size="sm" variant="outline" onClick={() => setHistoryExpanded((prev) => !prev)}>
+                {historyExpanded ? "只看最新" : `展开全部（还有 ${hiddenArtifactCount} 条）`}
+              </Button>
+            ) : null}
+          </div>
         </CardContent>
       </Card>
 

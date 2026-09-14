@@ -147,6 +147,12 @@ class PolicyService:
         )
 
         # 解析建议值并写入该城市各场景的自动爬虫字段（PRD 11.10 / 15.3）
+        #
+        # 这是**正则兜底路径**，与 WorkBuddy 的 AI 抽取（agent_service）并存。
+        # 正则只取第一处匹配且不看上下文，准确度远低于 AI —— 实测它曾把统计公报里的
+        # 「目录范围内基金支付比例 80.23%」（住院报销比例）当成 P2 基金支付比例写进去，
+        # 又曾把「未就业城乡居民…50% 左右」写成 P2，覆盖掉 AI 正确抽出的 0.7。
+        # 因此这里**只在字段还没有建议值时才写**，绝不覆盖已有结果（AI 优先）。
         readable = extract_readable_text(result.raw_content, result.content_type)
         suggestions = parse_suggestions(readable)
         if suggestions:
@@ -158,16 +164,66 @@ class PolicyService:
                 "documentId": None,
                 "quote": None,
             }
+            written: list[dict[str, Any]] = []
+            skipped: list[dict[str, Any]] = []
             for project in self.repository.list_projects():
                 if str(project.get("cityId") or project.get("city")) != str(source["cityId"]):
                     continue
                 for scenario in project.get("scenarios", []):
+                    existing = {
+                        str(row["fieldId"]): row
+                        for row in self.repository.list_field_values(str(scenario["id"]))
+                    }
                     for suggestion in suggestions:
+                        field_id = str(suggestion["fieldId"])
+                        current = existing.get(field_id) or {}
+                        if current.get("suggestedValue") is not None:
+                            skipped.append(
+                                {
+                                    "scenarioId": scenario["id"],
+                                    "fieldId": field_id,
+                                    "reason": "该字段已有建议值，正则兜底不覆盖",
+                                }
+                            )
+                            continue
                         row = dict(suggested_source)
                         row["quote"] = suggestion["quote"]
                         self.repository.save_field_suggestion(
-                            scenario["id"], suggestion["fieldId"], suggestion["value"], row
+                            scenario["id"], field_id, suggestion["value"], row
                         )
+                        written.append(
+                            {
+                                "fieldId": field_id,
+                                "value": suggestion["value"],
+                                "unit": None,
+                                "confidence": None,
+                                "quote": suggestion["quote"],
+                                "effectiveDate": None,
+                            }
+                        )
+            # 补审计：正则路径过去直接写库、不留痕，排查建议值来源时会断链。
+            # 只在实际写入时留记录，避免每次抓取都产生空记录。
+            if written:
+                self.repository.create_extraction_submission(
+                    {
+                        "cityId": source.get("cityId"),
+                        "sourceId": source_id,
+                        "artifactId": artifact["artifactId"],
+                        "agentRunId": "regex-fallback",
+                        "agentVersion": "regex-fallback@1",
+                        "payload": {
+                            "submissions": [],
+                            "accepted": written,
+                            "skipped": skipped,
+                            "notDisclosed": [],
+                            "origin": "regex_fallback",
+                        },
+                        "resultStatus": "accepted",
+                        "acceptedCount": len(written),
+                        "rejectedCount": 0,
+                        "rejections": [],
+                    }
+                )
         artifact["suggestions"] = suggestions
         return artifact
 

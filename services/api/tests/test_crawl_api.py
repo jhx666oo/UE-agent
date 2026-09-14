@@ -184,6 +184,90 @@ class CrawlApiTests(unittest.TestCase):
         ).json()
         self.assertEqual(scenario_now["inputs"]["P1"], 50)
 
+    def test_regex_fallback_never_overwrites_existing_suggestion(self):
+        """正则兜底只在字段没有建议值时写入，绝不覆盖已有结果。
+
+        背景：正则只取第一处匹配、不看上下文，实测曾把统计公报里的
+        「目录范围内基金支付比例 80.23%」（住院报销比例）当成 P2 写进去，
+        并覆盖掉 AI 正确抽出的 0.7。夹具页写的是「基金支付比例 80%」，
+        这里先放一个 0.7，抓取后必须仍是 0.7。
+        """
+        source = self._make_source(f"{self.base}/policy")
+        project = self.client.post(
+            "/api/projects", json={"name": "不覆盖", "city": "长沙", "cityId": "changsha"}
+        ).json()
+        scenario = self.client.post(
+            f"/api/projects/{project['id']}/scenarios", json={"name": "基准"}
+        ).json()
+
+        self.repository.save_field_suggestion(
+            str(scenario["id"]),
+            "P2",
+            0.7,
+            {"sourceName": "AI 抽取", "quote": "按单位职工参保政策参保的，基金支付比例为 70% 左右"},
+        )
+
+        self.client.post(f"/api/policies/sources/{source['id']}/crawl")
+
+        by_field = {row["fieldId"]: row for row in self.repository.list_field_values(scenario["id"])}
+        # P2 已有建议值 → 正则不得覆盖
+        self.assertEqual(by_field["P2"]["suggestedValue"], 0.7)
+        self.assertEqual(by_field["P2"]["suggestedSource"]["sourceName"], "AI 抽取")
+        # P1 原本没有建议值 → 正则兜底仍可写入
+        self.assertEqual(by_field["P1"]["suggestedValue"], 60)
+        # 正则路径的写入现在会留审计记录，便于追溯来源
+        runs = [
+            row["agentRunId"]
+            for row in self.repository.list_extraction_submissions(city_id="changsha")
+        ]
+        self.assertIn("regex-fallback", runs)
+
+    def test_crawl_all_covers_active_sources_and_skips_paused(self):
+        """一键全部抓取：覆盖启用来源、跳过停用来源、单条失败不中断整批。"""
+        self._make_source(f"{self.base}/policy", name="甲")
+        self._make_source(f"{self.base}/policy", name="乙")
+        self._make_source(f"{self.base}/policy", name="丙", status="paused")
+        self._make_source(f"{self.base}/missing", name="丁")
+
+        response = self.client.post("/api/policies/cities/changsha/crawl-all")
+
+        self.assertEqual(response.status_code, 200, response.text)
+        body = response.json()
+        self.assertEqual(body["total"], 4)
+        self.assertEqual(body["succeeded"], 2)
+        self.assertEqual(body["failed"], 1)
+        self.assertEqual(body["skipped"], 1)
+        by_name = {item["name"]: item for item in body["results"]}
+        self.assertEqual(by_name["甲"]["status"], "success")
+        self.assertEqual(by_name["丙"]["status"], "skipped")
+        self.assertEqual(by_name["丁"]["status"], "failed")
+
+    def test_source_freshness_flags_stale_annual_document(self):
+        """年度文档长期无内容变更 → 判「疑似过期」；非年度来源只判「长期未变」。"""
+        from app.api import routes as routes_module
+
+        annual = self._make_source(f"{self.base}/policy", name="长沙市2025年统计公报")
+        plain = self._make_source(f"{self.base}/policy", name="长沙医保局")
+        self.client.post(f"/api/policies/sources/{annual['id']}/crawl")
+        self.client.post(f"/api/policies/sources/{plain['id']}/crawl")
+
+        original = routes_module.SOURCE_STALE_DAYS
+        routes_module.SOURCE_STALE_DAYS = 0
+        try:
+            body = self.client.get("/api/policies/cities/changsha/source-freshness").json()
+        finally:
+            routes_module.SOURCE_STALE_DAYS = original
+
+        self.assertEqual(body["counts"]["total"], 2)
+        self.assertEqual(body["counts"]["stale"], 1)
+        by_name = {item["name"]: item for item in body["sources"]}
+        self.assertTrue(by_name["长沙市2025年统计公报"]["looksAnnual"])
+        self.assertEqual(by_name["长沙市2025年统计公报"]["level"], "stale")
+        self.assertIn("新年度版本", by_name["长沙市2025年统计公报"]["reason"])
+        # 名称里没有年份的来源只算「长期未变」，避免误报
+        self.assertFalse(by_name["长沙医保局"]["looksAnnual"])
+        self.assertEqual(by_name["长沙医保局"]["level"], "aging")
+
     def test_source_config_fields_round_trip(self):
         source = self._make_source(
             f"{self.base}/policy",

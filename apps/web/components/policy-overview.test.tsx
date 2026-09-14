@@ -137,6 +137,104 @@ describe("policy center", () => {
     await waitFor(() => expect(onCrawl).toHaveBeenCalledWith(detail.dataSources[0]));
   });
 
+  it("triggers a one-click crawl of all sources and shows the summary", async () => {
+    const onCrawlAll = vi.fn().mockResolvedValue({
+      cityId: "changsha",
+      crawledAt: "2026-09-14T02:00:00Z",
+      total: 2,
+      succeeded: 1,
+      failed: 1,
+      skipped: 0,
+      unchanged: 1,
+      changed: 1,
+      results: [
+        {
+          sourceId: "source-1",
+          name: "长沙医保局",
+          status: "success",
+          changeStatus: "unchanged",
+          httpStatus: 200,
+          message: null,
+        },
+        {
+          sourceId: "source-2",
+          name: "长沙市统计局",
+          status: "failed",
+          changeStatus: null,
+          httpStatus: null,
+          message: "官网返回 HTTP 404，未保存内容",
+        },
+      ],
+    });
+    render(
+      <PolicyCityDetail data={detail} sources={detail.dataSources} artifacts={[]} onCrawlAll={onCrawlAll} />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /全部抓取/ }));
+    await waitFor(() => expect(onCrawlAll).toHaveBeenCalledTimes(1));
+
+    expect(await screen.findByText(/共 2 个来源/)).toBeInTheDocument();
+    // 失败来源要逐条给出原因，而不是只报个数字
+    expect(screen.getByText(/长沙市统计局：官网返回 HTTP 404/)).toBeInTheDocument();
+  });
+
+  it("flags stale sources from the freshness check", () => {
+    render(
+      <PolicyCityDetail
+        data={detail}
+        sources={detail.dataSources}
+        artifacts={[]}
+        freshness={{
+          cityId: "changsha",
+          checkedAt: "2026-09-14T02:00:00Z",
+          staleDays: 365,
+          agingDays: 180,
+          counts: { total: 1, stale: 1, aging: 0, unknown: 0 },
+          sources: [
+            {
+              sourceId: "source-1",
+              name: "长沙医保局",
+              url: "https://example.test",
+              status: "active",
+              lastFetchedAt: "2026-09-14T00:00:00Z",
+              lastContentChangedAt: "2024-12-31T00:00:00Z",
+              daysSinceChange: 621,
+              looksAnnual: true,
+              level: "stale",
+              reason: "年度文档已 621 天无内容变更，可能已有新年度版本",
+            },
+          ],
+        }}
+      />,
+    );
+
+    // 汇总行点出有几个疑似过期
+    expect(screen.getByText(/1 个疑似过期/)).toBeInTheDocument();
+    // 逐条给出原因
+    expect(screen.getByText(/长沙医保局：年度文档已 621 天无内容变更/)).toBeInTheDocument();
+    // 来源行上挂徽标（文本恰好等于「疑似过期」的是 Badge）
+    expect(screen.getByText("疑似过期")).toBeInTheDocument();
+  });
+
+  it("limits crawl history to the newest 30 with an expand toggle", () => {
+    const many: CrawlArtifact[] = Array.from({ length: 35 }, (_, index) => ({
+      ...artifacts[0],
+      artifactId: `artifact-${index}`,
+      title: `记录 ${index}`,
+    }));
+    render(<PolicyCityDetail data={detail} sources={detail.dataSources} artifacts={many} />);
+
+    // 倒序渲染，最新（34）在前；第 20 条之后（14 及更早）默认不渲染
+    expect(screen.getByText("记录 34")).toBeInTheDocument();
+    expect(screen.getByText("记录 15")).toBeInTheDocument();
+    expect(screen.queryByText("记录 14")).toBeNull();
+    expect(screen.getByText(/共 35 条记录，当前只显示最新 20 条/)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /展开全部/ }));
+    expect(screen.getByText("记录 14")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "只看最新" })).toBeInTheDocument();
+  });
+
   it("creates a new source from the form", async () => {
     const onCreateSource = vi.fn().mockResolvedValue(undefined);
     render(
