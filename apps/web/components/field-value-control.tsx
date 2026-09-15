@@ -10,7 +10,8 @@ import { cn } from "@ue-agent/ui/lib/cn";
 import type { FieldValueView } from "@/lib/api";
 
 const VALUE_STATE_LABELS: Record<FieldValueView["valueState"], { label: string; variant: "neutral" | "info" | "success" | "warning" } | null> = {
-  empty: { label: "待采用建议", variant: "neutral" },
+  // empty 与 suggestion_ready 语义不同：前者「还没有任何值」，后者「已有建议值等人采用」——不能共用一段文案。
+  empty: { label: "待填写", variant: "neutral" },
   suggestion_ready: { label: "待采用建议", variant: "neutral" },
   accepted: { label: "已采用爬虫数据", variant: "success" },
   overridden: { label: "已手动覆盖", variant: "info" },

@@ -4,7 +4,7 @@ UE Agent 首版按「本机可运行、可交接」设计：结构化数据存 S
 
 ## 前置条件
 
-- Node.js 与 pnpm（仓库 `packageManager` 固定 `pnpm@10.13.1`）
+- Node.js 与 pnpm（仓库 `packageManager` 固定 `pnpm@11.14.0`）
 - uv（用于 Python 依赖与虚拟环境）
 - 首次拉取后执行 `pnpm install`，Python 侧由 `uv run --project services/api` 自动建环境
 

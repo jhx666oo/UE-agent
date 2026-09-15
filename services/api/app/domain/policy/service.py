@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+from collections import defaultdict
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
@@ -24,12 +25,118 @@ class CrawlServiceError(Exception):
 
 
 # PRD 11.10：可解析的政策字段 -> 关联的 Excel 参数编号。
-# 模式按可读文本匹配；百分比统一换算为 0-1 存储（PRD 10.5）。
-SUGGESTION_PATTERNS: tuple[tuple[str, str, re.Pattern[str], bool], ...] = (
-    # (field_id, 参数名称, 匹配模式, 是否百分比)
-    ("P1", "单小时服务单价", re.compile(r"单小时服务单价[^0-9]{0,12}([0-9]+(?:\.[0-9]+)?)"), False),
-    ("P2", "基金支付比例", re.compile(r"基金支付比例[^0-9]{0,8}([0-9]+(?:\.[0-9]+)?)\s*%"), True),
-    ("P8", "单次服务时长", re.compile(r"单次服务[^0-9]{0,6}([0-9]+(?:\.[0-9]+)?)\s*小时"), False),
+#
+# 这里只接受「字段标签 + 数值/明确结论」的正文，不根据上下文猜测。
+# 百分比统一换算为 0-1 存储（PRD 10.5）；C6/C7/C8 刻意不配置规则，
+# 因为官方通常不公开按年龄段拆分的失能率，不能让兜底脚本产生伪数据。
+# pattern 的 value 组是命名组，quote 仍保留完整匹配文本供页面回溯。
+SUGGESTION_PATTERNS: tuple[tuple[str, str, re.Pattern[str], str], ...] = (
+    # (field_id, 参数名称, 匹配模式, 解析类型: number / percent / enum / boolean)
+    (
+        "C2",
+        "城市行政等级",
+        re.compile(r"(?:为|是|属于)\s*(?P<value>一线|新一线|二线|三线)\s*城市"),
+        "enum",
+    ),
+    (
+        "C3",
+        "常住总人口",
+        re.compile(r"常住(?:总)?人口[^0-9]{0,16}(?P<value>[0-9]+(?:\.[0-9]+)?)\s*万(?:人)?"),
+        "number",
+    ),
+    (
+        "C4",
+        "60岁以上人口占比",
+        re.compile(r"60\s*岁(?:以上|及以上)[^0-9]{0,16}(?P<value>[0-9]+(?:\.[0-9]+)?)\s*%"),
+        "percent",
+    ),
+    (
+        "C5",
+        "80岁以上人口占比",
+        re.compile(r"80\s*岁(?:以上|及以上)[^0-9]{0,16}(?P<value>[0-9]+(?:\.[0-9]+)?)\s*%"),
+        "percent",
+    ),
+    (
+        "C10",
+        "职工医保参保人数",
+        re.compile(r"职工医保(?:参保)?人数[^0-9]{0,16}(?P<value>[0-9]+(?:\.[0-9]+)?)\s*万(?:人)?"),
+        "number",
+    ),
+    (
+        "C11",
+        "医保基金净结余",
+        re.compile(r"医保基金(?:净)?结余[^0-9-]{0,16}(?P<value>-?[0-9]+(?:\.[0-9]+)?)\s*亿(?:元)?"),
+        "number",
+    ),
+    (
+        "C13",
+        "区域总面积",
+        re.compile(
+            r"(?:区域|行政区域|全市|全区)?总面积[^0-9]{0,16}"
+            r"(?P<value>[0-9]+(?:\.[0-9]+)?)\s*(?:平方公里|km²|km2)"
+        ),
+        "number",
+    ),
+    (
+        "P1",
+        "单小时服务单价",
+        re.compile(r"(?:单小时|每小时)服务单价[^0-9]{0,16}(?P<value>[0-9]+(?:\.[0-9]+)?)"),
+        "number",
+    ),
+    (
+        "P2",
+        "基金支付比例",
+        re.compile(r"基金支付比例[^0-9]{0,12}(?P<value>[0-9]+(?:\.[0-9]+)?)\s*%"),
+        "percent",
+    ),
+    (
+        "P4",
+        "最低护理员纳保数",
+        re.compile(r"最低护理员纳保数[^0-9]{0,12}(?P<value>[0-9]+(?:\.[0-9]+)?)\s*人"),
+        "number",
+    ),
+    (
+        "P5",
+        "最低护士配置数",
+        re.compile(r"最低护士配置数[^0-9]{0,12}(?P<value>[0-9]+(?:\.[0-9]+)?)\s*人"),
+        "number",
+    ),
+    (
+        "P6",
+        "失能状态持续时长要求",
+        re.compile(r"失能状态持续时长要求[^0-9]{0,12}(?P<value>[0-9]+(?:\.[0-9]+)?)\s*个?月"),
+        "number",
+    ),
+    (
+        "P7",
+        "评估通过率门槛",
+        re.compile(r"评估通过率门槛[^0-9]{0,12}(?P<value>[0-9]+(?:\.[0-9]+)?)\s*%"),
+        "percent",
+    ),
+    (
+        "P8",
+        "单次服务时长",
+        re.compile(r"单次服务(?:时长|服务时长)?[^0-9]{0,12}(?P<value>[0-9]+(?:\.[0-9]+)?)\s*小时"),
+        "number",
+    ),
+    (
+        "P9",
+        "每月必选服务项数",
+        re.compile(r"每月必选服务项数[^0-9]{0,12}(?P<value>[0-9]+(?:\.[0-9]+)?)\s*项"),
+        "number",
+    ),
+    (
+        "P10",
+        "辅具政策是否试点",
+        re.compile(r"(?:不|未)[^。；，,]{0,12}辅具[^。；，,]{0,24}(?:试点|纳入|开展)|辅具[^。；，,]{0,24}(?:试点|纳入|开展)"),
+        "boolean",
+    ),
+    (
+        "P11",
+        "亲情照护模式",
+        re.compile(r"(?:不|未)[^。；，,]{0,12}亲情照护[^。；，,]{0,24}(?:支持|开展|允许|模式|服务)|亲情照护[^。；，,]{0,24}(?:支持|开展|允许|模式|服务)"),
+        "boolean",
+    ),
 )
 
 
@@ -38,15 +145,19 @@ def parse_suggestions(text: str | None) -> list[dict[str, Any]]:
     if not text:
         return []
     suggestions: list[dict[str, Any]] = []
-    for field_id, name, pattern, is_percent in SUGGESTION_PATTERNS:
+    for field_id, name, pattern, value_type in SUGGESTION_PATTERNS:
         match = pattern.search(text)
         if match is None:
             continue
-        value: float | int = float(match.group(1))
-        if value.is_integer():
-            value = int(value)
-        if is_percent:
-            value = value / 100
+        if value_type == "boolean":
+            value = "否" if re.search(r"不|未|无", match.group(0)) else "是"
+        elif value_type == "enum":
+            value = match.group("value")
+        else:
+            numeric_value = float(match.group("value"))
+            if numeric_value.is_integer():
+                numeric_value = int(numeric_value)
+            value = round(numeric_value / 100, 10) if value_type == "percent" else numeric_value
         suggestions.append({"fieldId": field_id, "name": name, "value": value, "quote": match.group(0).strip()})
     return suggestions
 
@@ -489,13 +600,30 @@ class PolicyService:
         documents = self.repository.list_policy_documents()
         sources = self.repository.list_data_sources()
         facts = self.repository.list_policy_facts()
+        artifacts = self.repository.list_crawl_artifacts()
+        suggestion_counts = self._suggestion_counts(projects)
         all_city_ids = {
             str(item.get("cityId") or item.get("city") or "unknown-city") for item in projects
         } | {str(item.get("cityId")) for item in documents + sources if item.get("cityId")}
         selected = set(city_ids or all_city_ids)
-        cities = [self._city_summary(city_id, projects, documents, sources, facts) for city_id in sorted(selected)]
+        cities = [
+            self._city_summary(
+                city_id,
+                projects,
+                documents,
+                sources,
+                facts,
+                artifacts,
+                suggestion_counts.get(city_id, 0),
+            )
+            for city_id in sorted(selected)
+        ]
         pending = sum(int(city["pendingReviewCount"]) for city in cities)
         approved = sum(int(city["approvedFactCount"]) for city in cities)
+        source_count = sum(int(city["sourceCount"]) for city in cities)
+        active_source_count = sum(int(city["activeSourceCount"]) for city in cities)
+        crawl_count = sum(int(city["crawlCount"]) for city in cities)
+        suggestion_count = sum(int(city["suggestionCount"]) for city in cities)
         alerts = [
             {
                 "type": "policy",
@@ -508,12 +636,56 @@ class PolicyService:
             for city in cities
             if city["pendingReviewCount"]
         ]
+        alerts.extend(
+            {
+                "type": "policy-source",
+                "severity": "danger",
+                "cityId": city["cityId"],
+                "cityName": city["cityName"],
+                "message": f"有 {city['errorSourceCount']} 个政策来源最近抓取失败",
+                "href": f"/policies/{city['cityId']}",
+            }
+            for city in cities
+            if city["errorSourceCount"]
+        )
+        alerts.extend(
+            {
+                "type": "policy-suggestion",
+                "severity": "info",
+                "cityId": city["cityId"],
+                "cityName": city["cityName"],
+                "message": f"有 {city['suggestionCount']} 个政策建议值待采用",
+                "href": f"/projects/{city['projectId']}" if city.get("projectId") else f"/policies/{city['cityId']}",
+            }
+            for city in cities
+            if city["suggestionCount"]
+        )
         return {
             "cities": cities,
             "pendingReviewCount": pending,
             "approvedFactCount": approved,
+            "sourceCount": source_count,
+            "activeSourceCount": active_source_count,
+            "crawlCount": crawl_count,
+            "suggestionCount": suggestion_count,
             "alerts": alerts,
         }
+
+    def _suggestion_counts(self, projects: Sequence[Mapping[str, Any]]) -> dict[str, int]:
+        """按城市统计去重后的待采用建议值，不把多个场景重复算成多条。"""
+        fields_by_city: dict[str, set[str]] = defaultdict(set)
+        for project in projects:
+            city_id = str(project.get("cityId") or project.get("city") or "")
+            if not city_id:
+                continue
+            for scenario in project.get("scenarios") or []:
+                scenario_id = str(scenario.get("id") or "")
+                if not scenario_id:
+                    continue
+                for row in self.repository.list_field_values(scenario_id):
+                    if row.get("valueState") == "suggestion_ready" and row.get("suggestedValue") is not None:
+                        fields_by_city[city_id].add(str(row.get("fieldId")))
+        return {city_id: len(field_ids) for city_id, field_ids in fields_by_city.items()}
 
     def city_detail(self, city_id: str) -> dict[str, Any]:
         projects = [
@@ -524,11 +696,27 @@ class PolicyService:
         documents = self.repository.list_policy_documents(city_id=city_id)
         sources = self.repository.list_data_sources(city_id=city_id)
         facts = self.repository.list_policy_facts(city_id=city_id)
+        artifacts = self.repository.list_crawl_artifacts(city_id=city_id)
+        summary = self._city_summary(
+            city_id,
+            projects,
+            documents,
+            sources,
+            facts,
+            artifacts,
+            self._suggestion_counts(projects).get(city_id, 0),
+        )
         return {
             "cityId": city_id,
             "cityName": str(projects[0].get("city") if projects else city_id),
             "documents": documents,
             "dataSources": sources,
+            "sourceCount": summary["sourceCount"],
+            "activeSourceCount": summary["activeSourceCount"],
+            "errorSourceCount": summary["errorSourceCount"],
+            "crawlCount": summary["crawlCount"],
+            "lastFetchedAt": summary["lastFetchedAt"],
+            "suggestionCount": summary["suggestionCount"],
             "facts": facts,
             "approvedFacts": [fact for fact in facts if fact.get("status") == "approved"],
             "pendingReviewCount": sum(fact.get("status") == "candidate" for fact in facts),
@@ -542,27 +730,51 @@ class PolicyService:
         documents: Sequence[Mapping[str, Any]],
         sources: Sequence[Mapping[str, Any]],
         facts: Sequence[Mapping[str, Any]],
+        artifacts: Sequence[Mapping[str, Any]],
+        suggestion_count: int,
     ) -> dict[str, Any]:
         city_documents = [item for item in documents if item.get("cityId") == city_id]
         city_sources = [item for item in sources if item.get("cityId") == city_id]
         city_facts = [item for item in facts if item.get("cityId") == city_id]
+        city_artifacts = [item for item in artifacts if item.get("cityId") == city_id]
         city_projects = [project for project in projects if str(project.get("cityId") or project.get("city")) == city_id]
         approved_facts = [fact for fact in city_facts if fact.get("status") == "approved"]
         pending = [fact for fact in city_facts if fact.get("status") == "candidate"]
+        active_source_count = sum(item.get("status") == "active" for item in city_sources)
+        error_source_count = sum(item.get("status") == "error" for item in city_sources)
+        source_status = (
+            "active"
+            if active_source_count
+            else "error"
+            if error_source_count
+            else "paused"
+            if city_sources
+            else "missing"
+        )
         latest_values = [
-            str(item.get("updatedAt") or item.get("uploadedAt") or "")
-            for item in city_documents + city_sources + city_facts
-            if item.get("updatedAt") or item.get("uploadedAt")
+            str(item.get("updatedAt") or item.get("uploadedAt") or item.get("fetchedAt") or "")
+            for item in city_documents + city_sources + city_facts + city_artifacts
+            if item.get("updatedAt") or item.get("uploadedAt") or item.get("fetchedAt")
         ]
         return {
             "cityId": city_id,
             "cityName": str(city_projects[0].get("city") if city_projects else city_id),
             "documentCount": len(city_documents),
             "latestUpdatedAt": max(latest_values, default=None),
+            "sourceCount": len(city_sources),
+            "activeSourceCount": active_source_count,
+            "errorSourceCount": error_source_count,
+            "crawlCount": len(city_artifacts),
+            "lastFetchedAt": max(
+                (str(item.get("fetchedAt")) for item in city_artifacts if item.get("fetchedAt")),
+                default=None,
+            ),
+            "suggestionCount": suggestion_count,
             "pendingReviewCount": len(pending),
             "approvedFactCount": len(approved_facts),
             "completeness": None,
-            "sourceStatus": "active" if any(item.get("status") == "active" for item in city_sources) else "missing",
+            "sourceStatus": source_status,
             "affectedProjectCount": len(city_projects),
+            "projectId": city_projects[0].get("id") if city_projects else None,
             "approvedFacts": approved_facts,
         }

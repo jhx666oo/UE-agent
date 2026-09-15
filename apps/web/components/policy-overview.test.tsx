@@ -12,6 +12,13 @@ const overview: PolicyOverviewResponse = {
       cityName: "长沙",
       documentCount: 2,
       latestUpdatedAt: "2026-09-08T00:00:00Z",
+      sourceCount: 1,
+      activeSourceCount: 1,
+      errorSourceCount: 0,
+      crawlCount: 4,
+      lastFetchedAt: "2026-09-08T00:00:00Z",
+      suggestionCount: 2,
+      projectId: "project-1",
       pendingReviewCount: 1,
       approvedFactCount: 3,
       completeness: 75,
@@ -21,6 +28,10 @@ const overview: PolicyOverviewResponse = {
   ],
   pendingReviewCount: 1,
   approvedFactCount: 3,
+  sourceCount: 1,
+  activeSourceCount: 1,
+  crawlCount: 4,
+  suggestionCount: 2,
   alerts: [],
 };
 
@@ -28,6 +39,12 @@ const detail: PolicyCityDetailResponse = {
   cityId: "changsha",
   cityName: "长沙",
   documents: [],
+  sourceCount: 1,
+  activeSourceCount: 1,
+  errorSourceCount: 0,
+  crawlCount: 1,
+  lastFetchedAt: "2026-09-08T00:00:00Z",
+  suggestionCount: 2,
   dataSources: [
     { id: "source-1", cityId: "changsha", name: "长沙医保局", kind: "government", url: "https://example.test", status: "active", createdAt: "2026-09-08T00:00:00Z", updatedAt: "2026-09-08T00:00:00Z" },
   ],
@@ -81,13 +98,15 @@ const artifacts: CrawlArtifact[] = [
 afterEach(() => cleanup());
 
 describe("policy center", () => {
-  it("filters the global policy overview by city and shows review badges", () => {
+  it("filters the global policy overview by city and shows crawler metrics", () => {
     const onCityChange = vi.fn();
     render(<PolicyOverview initialData={overview} onCityChange={onCityChange} />);
 
     expect(screen.getByRole("heading", { name: "政策资料" })).toBeInTheDocument();
-    expect(screen.getByText("待审核 1")).toBeInTheDocument();
-    expect(screen.getByText("已确认 3")).toBeInTheDocument();
+    expect(screen.getByText("已配置来源 1")).toBeInTheDocument();
+    expect(screen.getByText("待采用建议值 2")).toBeInTheDocument();
+    expect(screen.getByText(/配置公开官网链接/)).toBeInTheDocument();
+    expect(screen.queryByText(/上传城市政策/)).toBeNull();
     fireEvent.change(screen.getByLabelText("城市"), { target: { value: "changsha" } });
     expect(onCityChange).toHaveBeenCalledWith("changsha");
   });
@@ -120,6 +139,23 @@ describe("policy center", () => {
         "建议值以灰色提示展示在城市测算页，点击「采用建议值」后才写入参数；手工填写会标记为已覆盖并保留建议值来源。",
       ),
     ).toBeInTheDocument();
+  });
+
+  it("exposes policy exports from the city page", () => {
+    render(<PolicyCityDetail data={detail} sources={detail.dataSources} artifacts={artifacts} />);
+
+    expect(screen.getByRole("link", { name: "导出建议值 CSV" })).toHaveAttribute(
+      "href",
+      expect.stringContaining("/api/policies/export?format=csv&scope=city&cityId=changsha&dataset=fields"),
+    );
+    expect(screen.getByRole("link", { name: "导出抓取记录 CSV" })).toHaveAttribute(
+      "href",
+      expect.stringContaining("dataset=artifacts"),
+    );
+    expect(screen.getByRole("link", { name: "导出完整 JSON" })).toHaveAttribute(
+      "href",
+      expect.stringContaining("format=json"),
+    );
   });
 
   it("triggers a crawl from the source row", async () => {

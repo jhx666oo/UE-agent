@@ -21,5 +21,11 @@ apps/web/CLAUDE.md
 .env*
 
 # 本地工具与工作区数据，不进入版本库。
+# 例外：项目级 skill 属于交付物，要随项目一起给别人 —— 所以只忽略 .workbuddy 下的
+# 其他内容（memory/、缓存等），skills/ 必须跟踪。
+# 注意必须写成 `.workbuddy/*` 而不是 `.workbuddy/` —— 后者会让 git 整个目录不进入，
+# 里面的例外规则（!）就失效了。
 .arts/
-.workbuddy/
+.workbuddy/*
+!.workbuddy/skills/
+!.workbuddy/skills/**

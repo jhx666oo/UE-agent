@@ -81,6 +81,11 @@ class PolicyApiTests(unittest.TestCase):
 
         overview = self.client.get("/api/policies/overview")
         self.assertEqual(overview.status_code, 200)
+        city_summary = overview.json()["cities"][0]
+        self.assertEqual(city_summary["sourceCount"], 1)
+        self.assertEqual(city_summary["activeSourceCount"], 1)
+        self.assertEqual(city_summary["crawlCount"], 1)
+        self.assertEqual(city_summary["suggestionCount"], 2)
         # 建议值不影响城市输入（PRD 15.2：suggestion_ready 计入建议值数量）
         unchanged = self.repository.get_scenario(project["id"], scenario["id"])
         self.assertEqual(unchanged["inputs"]["P1"], 50)
@@ -90,6 +95,8 @@ class PolicyApiTests(unittest.TestCase):
 
     def test_city_detail_lists_sources_and_artifacts(self) -> None:
         source = self._make_source(f"{self.base}/policy")
+        project = self.repository.create_project({"name": "City A", "city": "城市A", "cityId": "city-a"})
+        self.repository.create_scenario(project["id"], {"name": "基准", "inputs": {"P1": 50}})
         self.client.post(f"/api/policies/sources/{source['id']}/crawl")
 
         detail = self.client.get("/api/policies/cities/city-a")
@@ -97,6 +104,10 @@ class PolicyApiTests(unittest.TestCase):
         self.assertEqual(detail.status_code, 200)
         self.assertEqual(detail.json()["dataSources"][0]["id"], source["id"])
         self.assertEqual(detail.json()["dataSources"][0]["lastHttpStatus"], 200)
+        self.assertEqual(detail.json()["sourceCount"], 1)
+        self.assertEqual(detail.json()["activeSourceCount"], 1)
+        self.assertEqual(detail.json()["crawlCount"], 1)
+        self.assertEqual(detail.json()["suggestionCount"], 2)
 
     def test_source_url_must_be_public_http(self) -> None:
         source = self._make_source("http://192.168.0.10/policy")

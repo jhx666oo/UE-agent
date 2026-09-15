@@ -17,7 +17,7 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { IconAlertTriangle, IconArrowLeft, IconExternalLink, IconFileText, IconLink } from "@tabler/icons-react";
+import { IconArrowLeft, IconExternalLink, IconFileText } from "@tabler/icons-react";
 import { Badge } from "@ue-agent/ui/components/badge";
 import { Button } from "@ue-agent/ui/components/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@ue-agent/ui/components/card";
@@ -34,9 +34,7 @@ import {
 } from "@/lib/dashboard";
 import {
   buildCityPolicyExtract,
-  factStatusLabel,
   formatPolicyDate,
-  formatPolicyValue,
   getPolicyCityDetail,
   type CityPolicyExtract,
 } from "@/lib/policies";
@@ -318,7 +316,7 @@ export function CityFocusPanel({
         <CardHeader className="flex-row items-start justify-between gap-4">
           <div>
             <CardTitle>政策信息提炼</CardTitle>
-            <p className="mt-1 text-sm text-muted-foreground">该城市政策来源、抓取状态与候选字段审核结果，独立于测算结果展示。</p>
+            <p className="mt-1 text-sm text-muted-foreground">该城市官网来源、抓取状态与待采用建议值，独立于测算结果展示。</p>
           </div>
           <Button asChild size="sm" variant="outline">
             <Link href={policyHref ?? `/policies/${encodeURIComponent(city.cityId)}`}>
@@ -339,19 +337,22 @@ export function CityFocusPanel({
               <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
                 <div className="rounded-md border border-border p-3">
                   <p className="text-xs text-muted-foreground">官网来源</p>
-                  <p className="mt-1 text-sm font-medium tabular-nums">{policy.sourceCount} 个<span className="ml-1 text-xs font-normal text-muted-foreground">（正常 {policy.activeSourceCount}）</span></p>
+                  <p className="mt-1 text-sm font-medium tabular-nums">
+                    {policy.sourceCount} 个
+                    <span className="ml-1 text-xs font-normal text-muted-foreground">（正常 {policy.activeSourceCount}）</span>
+                  </p>
                 </div>
                 <div className="rounded-md border border-border p-3">
                   <p className="text-xs text-muted-foreground">最近抓取</p>
                   <p className="mt-1 text-sm font-medium">{formatPolicyDate(policy.latestFetchedAt)}</p>
                 </div>
                 <div className="rounded-md border border-border p-3">
-                  <p className="text-xs text-muted-foreground">待审核候选字段</p>
-                  <p className="mt-1 text-sm font-medium tabular-nums">{policy.pendingReviewCount} 项</p>
+                  <p className="text-xs text-muted-foreground">抓取记录</p>
+                  <p className="mt-1 text-sm font-medium tabular-nums">{policy.crawlCount} 条</p>
                 </div>
                 <div className="rounded-md border border-border p-3">
-                  <p className="text-xs text-muted-foreground">已采用政策字段</p>
-                  <p className="mt-1 text-sm font-medium tabular-nums">{policy.approvedFactCount} 项</p>
+                  <p className="text-xs text-muted-foreground">待采用建议值</p>
+                  <p className="mt-1 text-sm font-medium tabular-nums">{policy.suggestionCount} 项</p>
                 </div>
               </div>
 
@@ -361,42 +362,16 @@ export function CityFocusPanel({
                 </p>
               ) : null}
 
-              {policy.pendingFacts.length > 0 ? (
-                <div className="space-y-2">
-                  <p className="flex items-center gap-2 text-sm font-medium"><IconAlertTriangle size={15} stroke={1.75} className="text-warning" />待审核候选字段（{policy.pendingFacts.length}）</p>
-                  <ul className="space-y-2">
-                    {policy.pendingFacts.slice(0, 6).map((fact) => (
-                      <li key={fact.id} className="rounded-md border border-warning/30 bg-warning-subtle p-3 text-sm">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <Badge variant="warning">{factStatusLabel(fact.status)}</Badge>
-                          <span className="font-medium">{fact.fieldId ?? "未映射字段"}</span>
-                          <span className="tabular-nums">{formatPolicyValue(fact.value)}</span>
-                        </div>
-                        {fact.quote ? <p className="mt-1.5 text-xs text-muted-foreground">“{fact.quote}”</p> : null}
-                        {fact.source ? <p className="mt-1 flex items-center gap-1 text-xs text-muted-foreground"><IconLink size={13} stroke={1.75} />{fact.source}</p> : null}
-                      </li>
-                    ))}
-                  </ul>
-                  {policy.pendingFacts.length > 6 ? <p className="text-xs text-muted-foreground">还有 {policy.pendingFacts.length - 6} 项未展示，前往政策资料页审核。</p> : null}
-                </div>
+              {policy.errorSourceCount > 0 ? (
+                <p className="rounded-md border border-danger/30 bg-danger-subtle px-3 py-2 text-sm text-danger">
+                  有 {policy.errorSourceCount} 个官网来源最近抓取失败，请前往政策资料页检查链接或网络状态。
+                </p>
               ) : null}
 
-              {policy.approvedFacts.length > 0 ? (
-                <div className="space-y-2">
-                  <p className="text-sm font-medium">已采用政策字段（{policy.approvedFacts.length}）</p>
-                  <ul className="grid gap-2 sm:grid-cols-2">
-                    {policy.approvedFacts.slice(0, 8).map((fact) => (
-                      <li key={fact.id} className="rounded-md border border-border p-3 text-sm">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <Badge variant="success">{factStatusLabel(fact.status)}</Badge>
-                          <span className="font-medium">{fact.fieldId ?? "未映射字段"}</span>
-                          <span className="tabular-nums">{formatPolicyValue(fact.value)}</span>
-                        </div>
-                        {fact.effectiveDate ? <p className="mt-1 text-xs text-muted-foreground">生效日期 {fact.effectiveDate}</p> : null}
-                      </li>
-                    ))}
-                  </ul>
-                </div>
+              {policy.suggestionCount > 0 ? (
+                <p className="rounded-md border border-warning/30 bg-warning-subtle px-3 py-2 text-sm text-warning">
+                  有 {policy.suggestionCount} 个灰色建议值待采用。采用后需要重新测算，该城市结果才会更新到总览。
+                </p>
               ) : null}
 
               <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-info/30 bg-info-subtle px-3 py-2 text-sm text-info">

@@ -12,6 +12,8 @@ import sys
 HTML = """<!DOCTYPE html>
 <html><head><title>长沙市长期护理保险实施办法</title></head><body>
 <h1>长沙市长期护理保险实施办法</h1>
+<p>长沙市为新一线城市；常住人口 499.14 万人；60岁以上人口占比 20.58%；80岁以上人口占比 3.2%。</p>
+<p>职工医保参保人数 210 万人，医保基金净结余 12.6 亿元，区域总面积 11819 平方公里。</p>
 <p>第七条 长期护理保险基金支付比例为 80%。</p>
 <p>第八条 单小时服务单价调整为 66 元。</p>
 <p>单次服务时长 2 小时，每月必选服务项数 3 项。</p>
@@ -26,7 +28,16 @@ class Handler(http.server.BaseHTTPRequestHandler):
         pass
 
     def do_GET(self) -> None:  # noqa: N802
-        body = HTML.encode("utf-8")
+        if self.path.startswith("/search"):
+            port = self.server.server_address[1]
+            body = (
+                "<html><body>"
+                f'<a href="http://127.0.0.1:{port}/policy">长沙医保局长护险实施办法</a>'
+                f'<a href="http://127.0.0.1:{port}/industry">养老政策整理</a>'
+                "</body></html>"
+            ).encode("utf-8")
+        else:
+            body = HTML.encode("utf-8")
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))

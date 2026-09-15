@@ -198,6 +198,29 @@ class SqliteProjectRepository:
         return source
 
     @staticmethod
+    def _onboarding_job_dict(row: sqlite3.Row) -> dict[str, Any]:
+        return {
+            "id": row["id"],
+            "projectId": row["project_id"],
+            "cityId": row["city_id"],
+            "cityName": row["city_name"],
+            "status": row["status"],
+            "phase": row["phase"],
+            "totalQueries": row["total_queries"],
+            "discoveredCount": row["discovered_count"],
+            "officialSourceCount": row["official_source_count"],
+            "candidateCount": row["candidate_count"],
+            "crawledCount": row["crawled_count"],
+            "suggestionCount": row["suggestion_count"],
+            "errorCount": row["error_count"],
+            "errors": _load(row["errors_json"], []),
+            "startedAt": row["started_at"],
+            "finishedAt": row["finished_at"],
+            "createdAt": row["created_at"],
+            "updatedAt": row["updated_at"],
+        }
+
+    @staticmethod
     def _document_dict(row: sqlite3.Row) -> dict[str, Any]:
         return {
             "id": row["id"],
@@ -370,6 +393,107 @@ class SqliteProjectRepository:
                 ),
             )
         return {**project, "scenarios": []}
+
+    def create_onboarding_job(self, data: Mapping[str, Any]) -> dict[str, Any]:
+        now = utc_now()
+        job = {
+            "id": new_id("onboarding"),
+            "projectId": str(data["projectId"]),
+            "cityId": str(data["cityId"]),
+            "cityName": str(data["cityName"]),
+            "status": str(data.get("status") or "queued"),
+            "phase": str(data.get("phase") or "queued"),
+            "totalQueries": int(data.get("totalQueries") or 0),
+            "discoveredCount": int(data.get("discoveredCount") or 0),
+            "officialSourceCount": int(data.get("officialSourceCount") or 0),
+            "candidateCount": int(data.get("candidateCount") or 0),
+            "crawledCount": int(data.get("crawledCount") or 0),
+            "suggestionCount": int(data.get("suggestionCount") or 0),
+            "errorCount": int(data.get("errorCount") or 0),
+            "errors": list(data.get("errors") or []),
+            "startedAt": data.get("startedAt"),
+            "finishedAt": data.get("finishedAt"),
+            "createdAt": now,
+            "updatedAt": now,
+        }
+        try:
+            with self._db() as connection:
+                connection.execute(
+                    "INSERT INTO city_onboarding_jobs (id, project_id, city_id, city_name, status, phase,"
+                    " total_queries, discovered_count, official_source_count, candidate_count, crawled_count,"
+                    " suggestion_count, error_count, errors_json, started_at, finished_at, created_at, updated_at)"
+                    " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        job["id"], job["projectId"], job["cityId"], job["cityName"], job["status"], job["phase"],
+                        job["totalQueries"], job["discoveredCount"], job["officialSourceCount"], job["candidateCount"],
+                        job["crawledCount"], job["suggestionCount"], job["errorCount"], _dump(job["errors"]),
+                        job["startedAt"], job["finishedAt"], job["createdAt"], job["updatedAt"],
+                    ),
+                )
+        except sqlite3.IntegrityError:
+            active = self.get_active_onboarding_job(job["projectId"])
+            if active is not None:
+                return active
+            raise
+        return job
+
+    def get_onboarding_job(self, job_id: str) -> dict[str, Any]:
+        with self._db() as connection:
+            row = connection.execute(
+                "SELECT * FROM city_onboarding_jobs WHERE id = ?", (job_id,)
+            ).fetchone()
+        if row is None:
+            raise KeyError(job_id)
+        return self._onboarding_job_dict(row)
+
+    def get_active_onboarding_job(self, project_id: str) -> dict[str, Any] | None:
+        with self._db() as connection:
+            row = connection.execute(
+                "SELECT * FROM city_onboarding_jobs WHERE project_id = ?"
+                " AND status IN ('queued','discovering','sources_ready','crawling','extracting')"
+                " ORDER BY updated_at DESC LIMIT 1",
+                (project_id,),
+            ).fetchone()
+        return self._onboarding_job_dict(row) if row is not None else None
+
+    def list_onboarding_jobs(self, project_id: str | None = None) -> list[dict[str, Any]]:
+        clause = " WHERE project_id = ?" if project_id is not None else ""
+        params = (project_id,) if project_id is not None else ()
+        with self._db() as connection:
+            rows = connection.execute(
+                f"SELECT * FROM city_onboarding_jobs{clause} ORDER BY updated_at DESC, id DESC",
+                params,
+            ).fetchall()
+        return [self._onboarding_job_dict(row) for row in rows]
+
+    def update_onboarding_job(self, job_id: str, data: Mapping[str, Any]) -> dict[str, Any]:
+        column_by_key = {
+            "status": "status", "phase": "phase", "totalQueries": "total_queries",
+            "discoveredCount": "discovered_count", "officialSourceCount": "official_source_count",
+            "candidateCount": "candidate_count", "crawledCount": "crawled_count",
+            "suggestionCount": "suggestion_count", "errorCount": "error_count", "errors": "errors_json",
+            "startedAt": "started_at", "finishedAt": "finished_at",
+        }
+        assignments: list[str] = []
+        values: list[Any] = []
+        for key, column in column_by_key.items():
+            if key not in data:
+                continue
+            assignments.append(f"{column} = ?")
+            values.append(_dump(data[key]) if key == "errors" else data[key])
+        assignments.append("updated_at = ?")
+        values.append(utc_now())
+        values.append(job_id)
+        with self._db() as connection:
+            updated = connection.execute(
+                f"UPDATE city_onboarding_jobs SET {', '.join(assignments)} WHERE id = ?", values
+            )
+            if updated.rowcount == 0:
+                raise KeyError(job_id)
+            row = connection.execute(
+                "SELECT * FROM city_onboarding_jobs WHERE id = ?", (job_id,)
+            ).fetchone()
+        return self._onboarding_job_dict(row)
 
     def create_scenario(self, project_id: str, data: Mapping[str, Any]) -> dict[str, Any]:
         now = utc_now()

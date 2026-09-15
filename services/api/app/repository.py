@@ -29,6 +29,7 @@ def empty_store_payload() -> dict[str, Any]:
         "fieldValues": [],
         "fieldValueHistory": [],
         "crawlArtifacts": [],
+        "onboardingJobs": [],
     }
 
 
@@ -43,6 +44,7 @@ def normalize_store_payload(payload: Any) -> dict[str, Any]:
         "fieldValues",
         "fieldValueHistory",
         "crawlArtifacts",
+        "onboardingJobs",
     ):
         if not isinstance(payload.get(collection, []), list):
             raise ValueError(f"Invalid {collection} store")
@@ -165,6 +167,17 @@ class ProjectRepository(Protocol):
     def list_extraction_submissions(
         self, *, city_id: str | None = None, limit: int | None = None
     ) -> list[dict[str, Any]]: ...
+
+    # ---------- 城市自动入场任务 ----------
+    def create_onboarding_job(self, data: Mapping[str, Any]) -> dict[str, Any]: ...
+
+    def get_onboarding_job(self, job_id: str) -> dict[str, Any]: ...
+
+    def get_active_onboarding_job(self, project_id: str) -> dict[str, Any] | None: ...
+
+    def list_onboarding_jobs(self, project_id: str | None = None) -> list[dict[str, Any]]: ...
+
+    def update_onboarding_job(self, job_id: str, data: Mapping[str, Any]) -> dict[str, Any]: ...
 
 
 class LocalPolicyFileStore:
@@ -318,6 +331,75 @@ class JsonProjectRepository:
         payload["projects"].append(project)
         self._write(payload)
         return copy.deepcopy(project)
+
+    def create_onboarding_job(self, data: Mapping[str, Any]) -> dict[str, Any]:
+        now = utc_now()
+        job = {
+            "id": new_id("onboarding"),
+            "projectId": str(data["projectId"]),
+            "cityId": str(data["cityId"]),
+            "cityName": str(data["cityName"]),
+            "status": str(data.get("status") or "queued"),
+            "phase": str(data.get("phase") or "queued"),
+            "totalQueries": int(data.get("totalQueries") or 0),
+            "discoveredCount": int(data.get("discoveredCount") or 0),
+            "officialSourceCount": int(data.get("officialSourceCount") or 0),
+            "candidateCount": int(data.get("candidateCount") or 0),
+            "crawledCount": int(data.get("crawledCount") or 0),
+            "suggestionCount": int(data.get("suggestionCount") or 0),
+            "errorCount": int(data.get("errorCount") or 0),
+            "errors": copy.deepcopy(list(data.get("errors") or [])),
+            "startedAt": data.get("startedAt"),
+            "finishedAt": data.get("finishedAt"),
+            "createdAt": now,
+            "updatedAt": now,
+        }
+        payload = self._read()
+        payload.setdefault("onboardingJobs", []).append(job)
+        self._write(payload)
+        return copy.deepcopy(job)
+
+    def get_onboarding_job(self, job_id: str) -> dict[str, Any]:
+        for job in self._read().get("onboardingJobs", []):
+            if job.get("id") == job_id:
+                return copy.deepcopy(job)
+        raise KeyError(job_id)
+
+    def get_active_onboarding_job(self, project_id: str) -> dict[str, Any] | None:
+        active = {"queued", "discovering", "sources_ready", "crawling", "extracting"}
+        jobs = [
+            job
+            for job in self._read().get("onboardingJobs", [])
+            if job.get("projectId") == project_id and job.get("status") in active
+        ]
+        if not jobs:
+            return None
+        return copy.deepcopy(max(jobs, key=lambda item: str(item.get("updatedAt") or "")))
+
+    def list_onboarding_jobs(self, project_id: str | None = None) -> list[dict[str, Any]]:
+        jobs = [
+            copy.deepcopy(job)
+            for job in self._read().get("onboardingJobs", [])
+            if project_id is None or job.get("projectId") == project_id
+        ]
+        return sorted(jobs, key=lambda item: str(item.get("updatedAt") or ""), reverse=True)
+
+    def update_onboarding_job(self, job_id: str, data: Mapping[str, Any]) -> dict[str, Any]:
+        payload = self._read()
+        job = next((item for item in payload.get("onboardingJobs", []) if item.get("id") == job_id), None)
+        if job is None:
+            raise KeyError(job_id)
+        allowed = {
+            "status", "phase", "totalQueries", "discoveredCount", "officialSourceCount",
+            "candidateCount", "crawledCount", "suggestionCount", "errorCount", "errors",
+            "startedAt", "finishedAt",
+        }
+        for key in allowed:
+            if key in data:
+                job[key] = copy.deepcopy(data[key])
+        job["updatedAt"] = utc_now()
+        self._write(payload)
+        return copy.deepcopy(job)
 
     def delete_project(self, project_id: str) -> None:
         payload = self._read()

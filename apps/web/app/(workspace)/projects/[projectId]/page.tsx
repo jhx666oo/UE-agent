@@ -23,11 +23,13 @@ import { CityProjectWorkbench } from "@/components/city-project-workbench";
 import {
   createScenario,
   deleteProject,
+  getCityOnboarding,
   getModelSpec,
   getProject,
   listScenarioSnapshots,
   listScenarioValues,
   type CalculationSnapshot,
+  type CityOnboardingJob,
   type ProjectRecord,
   type ScenarioRecord,
   type ScenarioValuesResponse,
@@ -43,6 +45,7 @@ export default function CityProjectPage() {
   const [scenario, setScenario] = useState<ScenarioRecord | null>(null);
   const [snapshots, setSnapshots] = useState<CalculationSnapshot[]>([]);
   const [values, setValues] = useState<ScenarioValuesResponse | null>(null);
+  const [onboarding, setOnboarding] = useState<CityOnboardingJob | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -52,15 +55,17 @@ export default function CityProjectPage() {
     Promise.all([getProject(projectId), getModelSpec()])
       .then(async ([nextProject, nextSpec]) => {
         const nextScenario = nextProject.scenarios[0] ?? (await createScenario(projectId, { name: "基准" }));
-        const [nextSnapshots, nextValues] = await Promise.all([
+        const [nextSnapshots, nextValues, nextOnboarding] = await Promise.all([
           listScenarioSnapshots(projectId, nextScenario.id),
           listScenarioValues(projectId, nextScenario.id),
+          getCityOnboarding(projectId).catch(() => null),
         ]);
         setProject(nextProject);
         setSpec(nextSpec);
         setScenario(nextScenario);
         setSnapshots(nextSnapshots);
         setValues(nextValues);
+        setOnboarding(nextOnboarding);
       })
       .catch((requestError) => setError(requestError instanceof Error ? requestError.message : "城市测算加载失败"));
   }, [projectId]);
@@ -121,7 +126,14 @@ export default function CityProjectPage() {
           </>
         }
       />
-      <CityProjectWorkbench project={project} scenario={scenario} spec={spec} initialSnapshots={snapshots} initialValues={values} />
+      <CityProjectWorkbench
+        project={project}
+        scenario={scenario}
+        spec={spec}
+        initialSnapshots={snapshots}
+        initialValues={values}
+        onboardingJob={onboarding}
+      />
 
       <AlertDialog
         open={confirmOpen}

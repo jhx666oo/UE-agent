@@ -30,7 +30,7 @@ export default function NewProjectPage() {
     setSaving(true);
     setError(null);
     try {
-      const project = await createProject({
+      const created = await createProject({
         name: name.trim(),
         cityId: cityId.trim() || undefined,
         city: city.trim(),
@@ -38,7 +38,7 @@ export default function NewProjectPage() {
         baseMonth: baseMonth || null,
         stationMode,
       });
-      router.push(`/projects/${project.id}`);
+      router.push(`/projects/${created.project.id}`);
     } catch (submissionError) {
       setError(submissionError instanceof Error ? submissionError.message : "项目保存失败，请稍后重试");
       setSaving(false);
@@ -50,7 +50,7 @@ export default function NewProjectPage() {
       <PageHeader
         eyebrow="NEW PROJECT"
         title="新增城市"
-        description="先确定项目身份和测算基准，后续步骤会沿用这组信息。"
+        description="先填写城市名称，系统会自动寻找政策与数据来源，并把解析结果带回测算参数。"
         actions={
           <Button asChild variant="ghost">
             <Link href="/projects">返回项目</Link>
@@ -62,7 +62,7 @@ export default function NewProjectPage() {
         <Card>
         <CardHeader>
           <CardTitle>项目基本信息</CardTitle>
-          <CardDescription>城市创建后会自动生成基准场景，并进入城市测算参数配置。</CardDescription>
+          <CardDescription>城市创建后会自动生成基准场景，并启动来源发现、政策抓取和灰色建议值同步。</CardDescription>
         </CardHeader>
         <CardContent className="space-y-5">
           <div className="space-y-2">

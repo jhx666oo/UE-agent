@@ -58,7 +58,15 @@ const baseResponse: DashboardOverviewResponse = {
   ],
   trend: [],
   alerts: [{ type: "stale", severity: "warning", cityId: "zhuzhou", cityName: "株洲", message: "参数已修改，结果待重算", href: "/projects/project-2" }, { type: "issue", severity: "warning", cityId: "changsha", cityName: "长沙", message: "有 1 个待确认问题", href: "/projects/project-1" }],
-  policySummary: { pendingReviewCount: 1, cities: [], alerts: [{ type: "policy", severity: "info", cityId: "changsha", cityName: "长沙", message: "有政策文件待审核", href: "/policies/changsha" }] },
+  policySummary: {
+    pendingReviewCount: 1,
+    sourceCount: 2,
+    activeSourceCount: 2,
+    crawlCount: 4,
+    suggestionCount: 2,
+    cities: [{ cityId: "changsha", cityName: "长沙", sourceCount: 2, activeSourceCount: 2, errorSourceCount: 0, crawlCount: 4, lastFetchedAt: "2026-09-08T00:00:00Z", suggestionCount: 2, projectId: "project-1" }],
+    alerts: [{ type: "policy", severity: "info", cityId: "changsha", cityName: "长沙", message: "有政策文件待审核", href: "/policies/changsha" }],
+  },
 };
 
 afterEach(() => cleanup());
@@ -69,6 +77,16 @@ describe("DashboardOverview", () => {
 
     expect(screen.getByRole("heading", { name: "总览" })).toBeInTheDocument();
     expect(screen.getByText(/1 个城市有有效测算结果/)).toBeInTheDocument();
+  });
+
+  it("surfaces policy crawl metrics on the global dashboard", () => {
+    render(<DashboardOverview initialData={baseResponse} />);
+
+    expect(screen.getByText("政策资料同步")).toBeInTheDocument();
+    expect(screen.getByText("已配置来源")).toBeInTheDocument();
+    expect(screen.getAllByText("待采用建议值").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText("2 个").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByRole("link", { name: "查看政策资料" })).toHaveAttribute("href", "/policies");
   });
 
   it("emits a city scope change when a city checkbox is toggled", () => {
@@ -100,6 +118,12 @@ describe("DashboardOverview", () => {
       cityId: "changsha",
       cityName: "长沙",
       documents: [],
+      sourceCount: 1,
+      activeSourceCount: 1,
+      errorSourceCount: 0,
+      crawlCount: 3,
+      lastFetchedAt: "2026-09-08T00:00:00Z",
+      suggestionCount: 2,
       dataSources: [
         { id: "s1", cityId: "changsha", name: "长沙医保局", kind: "web", url: "https://example.gov.cn", status: "active", createdAt: "2026-09-01T00:00:00Z", updatedAt: "2026-09-08T00:00:00Z", lastFetchedAt: "2026-09-08T00:00:00Z" },
       ],
@@ -116,8 +140,9 @@ describe("DashboardOverview", () => {
 
     expect(screen.getByRole("heading", { name: "长沙营收分析" })).toBeInTheDocument();
     expect(screen.getByText("政策信息提炼")).toBeInTheDocument();
-    expect(await screen.findByText(/待审核候选字段（1）/)).toBeInTheDocument();
-    expect(screen.getByText(/已采用政策字段（1）/)).toBeInTheDocument();
+    expect(await screen.findByText(/待采用建议值/)).toBeInTheDocument();
+    expect(screen.getByText(/抓取记录/)).toBeInTheDocument();
+    expect(screen.queryByText(/待审核候选字段/)).toBeNull();
   });
 
   it("shows empty guidance when no city has a valid result", () => {

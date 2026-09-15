@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import quote
 
-from fastapi import APIRouter, Request, Response
+from fastapi import APIRouter, BackgroundTasks, Request, Response
 from fastapi.responses import JSONResponse
 
 from ..domain.u1.engine import DEFAULT_MODEL_VERSION, calculate_u1
@@ -29,9 +29,12 @@ from ..domain.u1.spec import (
 )
 from ..domain.dashboard.aggregator import build_dashboard_overview
 from ..domain.policy.agent_service import AgentSubmissionService, SubmissionError
+from ..domain.policy.discovery import city_id_from_name
+from ..domain.policy.onboarding_service import CityOnboardingService
 from ..domain.policy.service import CrawlServiceError, PolicyService
 from ..repository import ProjectRepository
 from .schemas import (
+    BulkSourceBatch,
     DataSourceCreate,
     DataSourceUpdate,
     ExtractionSubmissionRequest,
@@ -295,6 +298,88 @@ def city_source_freshness(city_id: str, request: Request) -> dict[str, Any]:
 @router.post("/policies/sources", status_code=201)
 def create_policy_source(payload: DataSourceCreate, request: Request) -> dict[str, Any]:
     return repository_from_request(request).create_data_source(payload.model_dump())
+
+
+@router.post("/policies/cities/{city_id}/sources/bulk", response_model=None)
+def bulk_create_policy_sources(
+    city_id: str, payload: BulkSourceBatch, request: Request
+) -> dict[str, Any]:
+    """批量预置来源 —— 「新增城市一键配置来源」的执行端。
+
+    逐个建 + 立即抓取验证，单条失败不影响其余。**不可达的会自动停用**：
+    本仓库没有删除来源的接口，停用等价于「不进后续轮次」（crawl-all 会跳过 paused），
+    同时保留记录便于人工改 URL 后重新启用 —— 避免把猜错的域名留成反复失败的活跃来源。
+    """
+    repository = repository_from_request(request)
+    service = PolicyService(repository)
+    service.crawl_allow_private = _crawl_allow_private(request)
+    raw_dir = _raw_sources_dir(request)
+
+    known = {
+        str(source.get("url"))
+        for source in repository.list_data_sources()
+        if str(source.get("cityId") or "") == city_id
+    }
+
+    results: list[dict[str, Any]] = []
+    for item in payload.sources:
+        url = item.url.strip()
+        entry: dict[str, Any] = {
+            "name": item.name,
+            "url": url,
+            "sourceId": None,
+            "status": "created",
+            "httpStatus": None,
+            "title": None,
+            "message": None,
+        }
+        if url in known:
+            entry.update(status="duplicate", message="该城市已有同 URL 来源")
+            results.append(entry)
+            continue
+        if not url.startswith(("http://", "https://")):
+            entry.update(status="rejected", message="仅接受 http/https 链接")
+            results.append(entry)
+            continue
+
+        source = repository.create_data_source(
+            {"cityId": city_id, "name": item.name, "kind": "web", "url": url, "note": item.note}
+        )
+        known.add(url)
+        entry["sourceId"] = source.get("id")
+        if not payload.verify:
+            results.append(entry)
+            continue
+
+        try:
+            artifact = service.crawl_source_now(str(source.get("id")), raw_dir=raw_dir)
+        except CrawlServiceError as error:
+            repository.update_data_source(
+                str(source.get("id")),
+                {"status": "paused", "note": f"自动预置时不可达，已停用：{error.message}"},
+            )
+            entry.update(status="unreachable", message=error.message)
+            results.append(entry)
+            continue
+
+        entry.update(
+            status="verified",
+            httpStatus=artifact.get("httpStatus"),
+            title=artifact.get("title"),
+        )
+        results.append(entry)
+
+    return {
+        "cityId": city_id,
+        "createdAt": datetime.now(timezone.utc).isoformat(),
+        "total": len(results),
+        "verified": sum(1 for item in results if item["status"] == "verified"),
+        "created": sum(1 for item in results if item["status"] == "created"),
+        "duplicate": sum(1 for item in results if item["status"] == "duplicate"),
+        "rejected": sum(1 for item in results if item["status"] == "rejected"),
+        "unreachable": sum(1 for item in results if item["status"] == "unreachable"),
+        "results": results,
+    }
 
 
 @router.put("/policies/sources/{source_id}", response_model=None)
@@ -913,8 +998,78 @@ def list_projects(request: Request) -> list[dict[str, Any]]:
 
 
 @router.post("/projects", status_code=201)
-def create_project(payload: ProjectCreate, request: Request) -> dict[str, Any]:
-    return repository_from_request(request).create_project(payload.model_dump())
+def create_project(
+    payload: ProjectCreate, request: Request, background_tasks: BackgroundTasks
+) -> dict[str, Any]:
+    repository = repository_from_request(request)
+    project_data = payload.model_dump()
+    project_data["cityId"] = str(payload.cityId or city_id_from_name(payload.city))
+    project = repository.create_project(project_data)
+    scenario = repository.create_scenario(
+        project["id"], {"name": "基准", "inputs": baseline_inputs()}
+    )
+    project = repository.get_project(project["id"])
+    job = CityOnboardingService(
+        repository,
+        discovery_provider=getattr(request.app.state, "discovery_provider", None),
+        raw_dir=_raw_sources_dir(request),
+        crawl_allow_private=_crawl_allow_private(request),
+    ).start(project["id"])
+    background_tasks.add_task(
+        _run_city_onboarding,
+        repository,
+        job["id"],
+        getattr(request.app.state, "discovery_provider", None),
+        _raw_sources_dir(request),
+        _crawl_allow_private(request),
+    )
+    # 继续保留旧的顶层项目字段，旧版客户端仍可读取 body.id；新客户端使用嵌套对象。
+    return {**project, "project": project, "onboarding": job, "scenario": scenario}
+
+
+def _run_city_onboarding(
+    repository: ProjectRepository,
+    job_id: str,
+    discovery_provider: Any,
+    raw_dir: Path,
+    crawl_allow_private: bool,
+) -> None:
+    CityOnboardingService(
+        repository,
+        discovery_provider=discovery_provider,
+        raw_dir=raw_dir,
+        crawl_allow_private=crawl_allow_private,
+    ).run(job_id)
+
+
+@router.get("/projects/{project_id}/onboarding", response_model=None)
+def get_city_onboarding(project_id: str, request: Request) -> dict[str, Any] | JSONResponse:
+    repository = repository_from_request(request)
+    try:
+        repository.get_project(project_id)
+        return CityOnboardingService(repository).get_status(project_id)
+    except KeyError:
+        return error_payload("NOT_FOUND", f"城市入场任务不存在：{project_id}")
+
+
+@router.post("/projects/{project_id}/onboarding/retry", response_model=None)
+def retry_city_onboarding(project_id: str, request: Request, background_tasks: BackgroundTasks) -> dict[str, Any] | JSONResponse:
+    repository = repository_from_request(request)
+    try:
+        repository.get_project(project_id)
+        job = CityOnboardingService(repository).retry_for_project(project_id)
+    except KeyError:
+        return error_payload("NOT_FOUND", f"城市入场任务不存在：{project_id}")
+    if job.get("status") in {"queued", "discovering", "sources_ready", "crawling", "extracting"}:
+        background_tasks.add_task(
+            _run_city_onboarding,
+            repository,
+            job["id"],
+            getattr(request.app.state, "discovery_provider", None),
+            _raw_sources_dir(request),
+            _crawl_allow_private(request),
+        )
+    return job
 
 
 @router.get("/projects/{project_id}")

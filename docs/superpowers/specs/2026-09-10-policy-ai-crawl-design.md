@@ -1,7 +1,7 @@
 # 政策资料 AI 抓取与自动更新设计
 
-日期：2026-09-10
-状态：设计确认（已定稿，已改为 WorkBuddy 驱动架构）
+日期：2026-09-15（原始设计：2026-09-10）
+状态：设计定稿 + Demo 实现基线（已改为 WorkBuddy 驱动架构）
 
 > **架构修订（2026-09-10 下午）**：原方案把 AI 能力（LiteLLM Gateway 调用）与
 > asyncio 调度器内置在 FastAPI 中，需要额外维护模型 API Key。经讨论改为
@@ -10,6 +10,19 @@
 >
 > 第 3 节之后的「5.1 AI 能力通道」「5.3 AI 检索层」「5.4 AI 结构化抽取层」
 > 「5.6 定时任务」「5.7 前端改动」已被第 8 节取代，保留原文仅供追溯决策过程。
+
+> **当前实现提示（2026-09-15）**：以第 8 节和仓库实际代码为准。Demo 已提供
+> 官网来源配置、单个/全部抓取、原文留存、SHA256 变更检测、确定性建议值、WorkBuddy
+> 派活/回传接口、来源新鲜度和 CSV/JSON/ZIP 导出。确定性解析覆盖 17 个可以从明确文本
+> 直接读取的自动爬虫字段；C6/C7/C8 明确返回未披露，不估算。Demo 不内置 LiteLLM
+> 客户端或 FastAPI 后台调度器，三天一次的自动触发由可选的 WorkBuddy automation
+> 或外部本地任务负责，API 只提供可重复调用的抓取接口。
+
+> **新增城市自动入场（2026-09-15）**：后续设计以
+> `docs/superpowers/specs/2026-09-15-city-auto-onboarding-design.md` 和实际代码为准。
+> 新增城市会自动创建入场任务，按三组字段族发现来源；高可信官方来源自动入正式来源，
+> 普通来源保留为候选，并自动抓取和生成城市测算灰色建议值。本文件第 4 节及第 8 节的
+> 「候选来源必须全部人工转正」仅适用于 WorkBuddy 独立回传链路，不覆盖自动入场任务。
 
 ## 1. 需求
 
@@ -34,11 +47,11 @@
 | 写回城市参数 → 灰色建议值 | 已有 | `save_field_suggestion` |
 | 城市公式页「采用建议值」按钮 | 已有 | `field-value-control.tsx` |
 
-**缺口**：
+**当前状态**：
 
-1. AI 理解政策文本 —— 现仅 `SUGGESTION_PATTERNS` **3 条正则**（P1/P2/P8），覆盖 20 个自动爬虫字段中的 3 个。
-2. AI 检索发现新政策来源 —— 完全没有。
-3. 每 3 天定时任务 —— 没有，只有手动「立即抓取」。
+1. 确定性兜底解析 —— 已覆盖 17 个可明确直读的字段；C6/C7/C8 不生成建议值。
+2. WorkBuddy AI 检索发现来源 —— 已有候选来源回传、人工转正接口；是否使用由本地 Demo 操作者决定。
+3. 每 3 天定时触发 —— API 侧保持无状态，由 WorkBuddy automation 或外部本地任务调用现有接口。
 
 ## 3. 20 个自动爬虫字段的抽取难度分档
 
@@ -64,7 +77,9 @@ C 档决定了：一条来源配一个检索关键词是不够的，**每个 Dat
   候选审核(逐条 采用/驳回) → 写回城市参数(灰色建议值) → 公式计算页采用后参与测算
 ```
 
-## 5. 实现方案
+## 5. 历史实现方案（仅保留作决策追溯）
+
+本节记录最初考虑过的 LiteLLM + FastAPI 内置调度方案，不代表当前 Demo 的运行方式。
 
 ### 5.1 AI 能力通道（已定）
 
@@ -159,7 +174,7 @@ extract_readable_text() → 正文清洗（去导航/页脚/相关链接）
 
 `packages/model-spec` 不涉及公式或参数语义变更，无需架构决策。
 
-## 6. 待办清单（实现顺序）
+## 6. 历史待办清单（已被第 8 节和实际代码替代）
 
 1. `llm/client.py` + `llm/prompts.py`（LLM 通道与 20 字段 Schema）
 2. `domain/policy/extractor.py`（正文清洗 + 结构化抽取）+ 单测
@@ -170,7 +185,7 @@ extract_readable_text() → 正文清洗（去导航/页脚/相关链接）
 7. 前端三个区块 + 测试
 8. 全量校验：后端 pytest、前端 vitest、`tsc --noEmit`、端到端一次真实抓取
 
-## 7. 风险
+## 7. 历史方案风险
 
 | 风险 | 缓解 |
 | --- | --- |
@@ -276,15 +291,15 @@ API 抓取响应里的 `changeStatus: "unchanged"` 会直接告诉 WorkBuddy「�
 
 **API 侧不写调度代码**。这样也解决了发布沙箱无持久 cron 的问题。
 
-### 8.8 修订后的实现顺序
+### 8.8 修订后的实现顺序与完成状态
 
-1. SQLite 迁移 004：`candidate_sources` 表 + `extraction_submissions` 审计表
-2. `POST /policies/fetch-requests`（复用 `crawl_source`，返回正文）
-3. `GET /policies/crawl-targets`（派活清单，含 difficulty 分档与增量 `fieldsToFill`）
-4. `POST /policies/extraction-submissions`（7 项校验 + 写建议值 + token 鉴权）
-5. `POST/GET /policies/source-candidates` + `promote` 转正式来源
-6. `suggested_source_json` 扩展 `confidence` / `quote` 字段
-7. 编写 `policy-ai-crawler` skill（WorkBuddy 执行手册）
-8. 创建每 3 天 automation
-9. 端到端跑通一次真实抓取，核对抽取质量
-10. 前端三个区块（调度状态条 / 候选来源 / 抽取结果表）
+1. SQLite 迁移 004：已完成，包含 `candidate_sources` 与 `extraction_submissions` 审计表。
+2. `POST /policies/fetch-requests`：已完成，复用 `crawl_source` 返回正文和变更状态。
+3. `GET /policies/crawl-targets`：已完成，含 difficulty 分档与增量 `fieldsToFill`。
+4. `POST /policies/extraction-submissions`：已完成，含 7 项校验、建议值落库和 token 鉴权。
+5. 来源候选入池、转正和来源 CRUD：已完成。
+6. `suggestedSource` 的 `confidence` / `quote` / `artifactId`：已完成。
+7. 单城市全部抓取、原文留存、新鲜度体检和导出：已完成。
+8. 前端官网抓取中心和城市测算灰色建议值：已完成。
+9. 本地端到端验收：`bash scripts/e2e-agent-flow.sh` 已覆盖直接抓取、WorkBuddy 回传、总览和导出。
+10. 每 3 天 automation：不写入仓库代码，需在实际 WorkBuddy/本地调度环境按 8.7 配置；这属于 Demo 运行环境配置，不属于生产部署。

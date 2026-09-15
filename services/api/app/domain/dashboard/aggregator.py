@@ -225,6 +225,39 @@ def _aggregate_trend(rows: list[Mapping[str, Any]], period: int) -> list[dict[st
     ]
 
 
+def _city_trends(rows: list[Mapping[str, Any]], period: int) -> list[dict[str, Any]]:
+    """按城市分组的月度趋势，供「多城对比」逐城市画线。
+
+    注意 `trend` 是**跨城市求和**的聚合序列 —— 多城市下得到的是合计，
+    无法回答「这条线是哪个城市」。所以这里额外给出分组序列。
+    """
+    series: list[dict[str, Any]] = []
+    for row in rows:
+        points = [
+            {
+                "month": int(point["month"]),
+                "stage": point.get("stage"),
+                "revenue": point.get("revenue"),
+                "netProfit": point.get("netProfit"),
+                "cumulativeCashFlow": point.get("cumulativeCashFlow"),
+            }
+            for point in row.get("monthlyTrend", [])
+            if isinstance(point, Mapping)
+            and isinstance(point.get("month"), int)
+            and int(point["month"]) <= period
+        ]
+        if not points:
+            continue
+        series.append(
+            {
+                "cityId": row.get("cityId"),
+                "cityName": row.get("cityName"),
+                "points": points,
+            }
+        )
+    return series
+
+
 def _payback_distribution(values: list[float | int]) -> list[dict[str, Any]]:
     buckets = {"1-12个月": 0, "13-24个月": 0, "25个月以上": 0}
     for value in values:
@@ -299,6 +332,18 @@ def build_dashboard_overview(
         "summary": summary,
         "cities": rows,
         "trend": _aggregate_trend(eligible_rows, period),
+        "trendByCity": _city_trends(eligible_rows, period),
         "alerts": _alerts(rows, policy_summary),
-        "policySummary": dict(policy_summary or {"pendingReviewCount": 0, "cities": [], "alerts": []}),
+        "policySummary": dict(
+            policy_summary
+            or {
+                "pendingReviewCount": 0,
+                "sourceCount": 0,
+                "activeSourceCount": 0,
+                "crawlCount": 0,
+                "suggestionCount": 0,
+                "cities": [],
+                "alerts": [],
+            }
+        ),
     }

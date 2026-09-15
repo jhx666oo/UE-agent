@@ -18,6 +18,7 @@ import {
   patchScenarioValue,
   updateScenario,
   type CalculationSnapshot,
+  type CityOnboardingJob,
   type FieldValueView,
   type ProjectRecord,
   type ScenarioRecord,
@@ -28,6 +29,7 @@ import {
 import { DashboardChart } from "@/components/dashboard-chart";
 import { FieldValueControl } from "@/components/field-value-control";
 import { U1ResultPanel } from "@/components/u1-result-panel";
+import { CityOnboardingStatus } from "@/components/city-onboarding-status";
 
 const STATUS_LABELS: Record<ScenarioRecord["status"], { label: string; variant: "neutral" | "info" | "success" | "warning" | "danger" }> = {
   draft: { label: "草稿", variant: "neutral" },
@@ -56,12 +58,14 @@ export function CityProjectWorkbench({
   spec,
   initialSnapshots = [],
   initialValues,
+  onboardingJob,
 }: Readonly<{
   project: ProjectRecord;
   scenario: ScenarioRecord;
   spec: U1ModelSpec;
   initialSnapshots?: CalculationSnapshot[];
   initialValues?: ScenarioValuesResponse;
+  onboardingJob?: CityOnboardingJob | null;
 }>) {
   const [fields, setFields] = useState<Map<string, FieldValueView>>(
     () => new Map((initialValues?.fields ?? []).map((field) => [field.fieldId, field])),
@@ -227,6 +231,7 @@ export function CityProjectWorkbench({
           <IconExternalLink size={16} stroke={1.75} />返回总览
         </Link>
       </div>
+      {onboardingJob ? <CityOnboardingStatus projectId={project.id} initialJob={onboardingJob} onSettled={refreshValues} /> : null}
       <Card>
         <CardHeader className="flex-row flex-wrap items-start justify-between gap-4">
           <div>

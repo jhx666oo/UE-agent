@@ -3,12 +3,28 @@ import {
   buildCostStructure,
   buildDashboardQuery,
   cityMetricStanding,
+  formatDashboardCompactNumber,
   getDashboardOverview,
   metricMedian,
   resolveDashboardScope,
   resolveViewMode,
   type DashboardOverviewResponse,
 } from "./dashboard";
+
+describe("formatDashboardCompactNumber", () => {
+  it("用亿/万压缩坐标轴刻度，避免长数字被裁", () => {
+    // 3.6e7 展开是「36,000,000」十个字符，窄卡片里会把刻度挤没
+    expect(formatDashboardCompactNumber(36000000)).toBe("3600万");
+    expect(formatDashboardCompactNumber(18000000)).toBe("1800万");
+    expect(formatDashboardCompactNumber(300000000)).toBe("3亿");
+    expect(formatDashboardCompactNumber(-100000000)).toBe("-1亿");
+    expect(formatDashboardCompactNumber(120000000)).toBe("1.2亿");
+    // 小数值仍走原格式
+    expect(formatDashboardCompactNumber(0)).toBe("0");
+    expect(formatDashboardCompactNumber(9999)).toBe("9,999");
+    expect(formatDashboardCompactNumber(null)).toBe("—");
+  });
+});
 
 describe("Dashboard API client", () => {
   it("serializes scope, cities, period and stale rule into the request URL", () => {
@@ -39,7 +55,15 @@ describe("Dashboard API client", () => {
       cities: [],
       trend: [],
       alerts: [],
-      policySummary: { pendingReviewCount: 0, cities: [], alerts: [] },
+      policySummary: {
+        pendingReviewCount: 0,
+        sourceCount: 0,
+        activeSourceCount: 0,
+        crawlCount: 0,
+        suggestionCount: 0,
+        cities: [],
+        alerts: [],
+      },
     };
     const fetcher = vi.fn().mockResolvedValue(response);
 

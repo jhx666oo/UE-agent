@@ -102,7 +102,8 @@ describe("PolicyCrawlStatusSection", () => {
     render(<PolicyCrawlStatusSection targets={targets} submissions={submissions} loading={false} error={null} />);
     expect(screen.getByText("AI 抓取调度状态")).toBeTruthy();
     // 2 个来源字段待填（P1/C2 各一处），目录 3 个字段
-    expect(screen.getByText("2 个 / 共 3 个自动爬虫字段")).toBeTruthy();
+    expect(screen.getByText("2 个")).toBeTruthy();
+    expect(screen.getByText("1 个城市 · 每市最多 3 个自动爬虫字段")).toBeTruthy();
     expect(screen.getByText("C6")).toBeTruthy();
     expect(screen.getByText(/部分被拒 · 接收 2 \/ 拒绝 1/)).toBeTruthy();
     expect(screen.getByText(/上一轮被拒 1 条/)).toBeTruthy();
@@ -126,7 +127,32 @@ describe("PolicyCrawlStatusSection", () => {
       <PolicyCrawlStatusSection targets={twoSources} submissions={[]} loading={false} error={null} />,
     );
     // 并集为 P1/C2/C6 共 3 个；若按来源累加会错误地显示 5 个
-    expect(screen.getByText("3 个 / 共 3 个自动爬虫字段")).toBeTruthy();
+    expect(screen.getByText("3 个")).toBeTruthy();
+  });
+
+  it("跨城市求和时不能与单市字段数写成同一个比值", () => {
+    // 分子是跨城市总量、分母是单市字段数，直接写成「N 个 / 共 M 个」会自相矛盾
+    // （实测两个城市时显示成「38 个 / 共 20 个」）。
+    const twoCities: CrawlTargetsResponse = {
+      ...targets,
+      cities: [
+        {
+          cityId: "changsha",
+          cityName: "长沙",
+          sources: [{ ...targets.cities[0].sources[0], fieldsToFill: ["P1", "C2"] }],
+        },
+        {
+          cityId: "yueyang",
+          cityName: "岳阳",
+          sources: [{ ...targets.cities[0].sources[0], sourceId: "source-yy", fieldsToFill: ["P1", "C2", "C6"] }],
+        },
+      ],
+    };
+    render(<PolicyCrawlStatusSection targets={twoCities} submissions={[]} loading={false} error={null} />);
+
+    // 长沙 2 + 岳阳 3 = 5（跨城市）；文案要写清「每市最多 3 个」而不是「共 3 个」
+    expect(screen.getByText("5 个")).toBeTruthy();
+    expect(screen.getByText("2 个城市 · 每市最多 3 个自动爬虫字段")).toBeTruthy();
   });
 
   it("无记录时显示尚无记录并给出采用提示", () => {

@@ -61,6 +61,29 @@ class DataSourceUpdate(BaseModel):
     note: str | None = Field(default=None, max_length=500)
 
 
+class BulkSourceItem(BaseModel):
+    """批量预置来源的单条 —— 供「新增城市一键配置来源」使用。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1, max_length=120)
+    url: str = Field(min_length=1, max_length=500)
+    note: str | None = Field(default=None, max_length=500)
+
+
+class BulkSourceBatch(BaseModel):
+    """一次提交多个来源。
+
+    `verify=True` 时逐个抓取验证：成功的留用并落档原文；**不可达的自动停用**
+    （没有删除来源的接口，停用等价于「不进后续轮次」，且便于人工改 URL 后重新启用）。
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    sources: list[BulkSourceItem] = Field(min_length=1, max_length=60)
+    verify: bool = True
+
+
 class PolicyCandidateInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

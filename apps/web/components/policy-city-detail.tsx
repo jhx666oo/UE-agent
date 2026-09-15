@@ -2,7 +2,7 @@
 
 import React, { useState } from "react";
 import Link from "next/link";
-import { IconArrowLeft, IconBolt, IconExternalLink, IconPlayerPlay, IconPlus } from "@tabler/icons-react";
+import { IconArrowLeft, IconBolt, IconDownload, IconExternalLink, IconPlayerPlay, IconPlus } from "@tabler/icons-react";
 import { Badge } from "@ue-agent/ui/components/badge";
 import { Button } from "@ue-agent/ui/components/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@ue-agent/ui/components/card";
@@ -12,6 +12,7 @@ import { PageHeader } from "@/components/page-header";
 import {
   formatPolicyDate,
   getCrawlArtifactUrl,
+  getPolicyExportUrl,
   type CrawlAllSummary,
   type CrawlArtifact,
   type DataSource,
@@ -142,14 +143,31 @@ export function PolicyCityDetail({
               <CardTitle>官网来源</CardTitle>
               <p className="text-sm text-muted-foreground">只抓取公开页面；本机地址、私有网段和非 HTTP 协议会被拒绝。</p>
             </div>
-            <Button
-              size="sm"
-              onClick={() => void crawlAll()}
-              disabled={!onCrawlAll || crawlingAll || activeSourceCount === 0}
-            >
-              <IconBolt size={15} stroke={1.75} />
-              {crawlingAll ? `抓取中…（${activeSourceCount} 个）` : `全部抓取（${activeSourceCount}）`}
-            </Button>
+            <div className="flex flex-wrap justify-end gap-2">
+              <Button asChild size="sm" variant="outline">
+                <a href={getPolicyExportUrl({ cityId: data.cityId, dataset: "fields" })}>
+                  <IconDownload size={15} stroke={1.75} />导出建议值 CSV
+                </a>
+              </Button>
+              <Button asChild size="sm" variant="outline">
+                <a href={getPolicyExportUrl({ cityId: data.cityId, dataset: "artifacts" })}>
+                  <IconDownload size={15} stroke={1.75} />导出抓取记录 CSV
+                </a>
+              </Button>
+              <Button asChild size="sm" variant="outline">
+                <a href={getPolicyExportUrl({ cityId: data.cityId, format: "json" })}>
+                  <IconDownload size={15} stroke={1.75} />导出完整 JSON
+                </a>
+              </Button>
+              <Button
+                size="sm"
+                onClick={() => void crawlAll()}
+                disabled={!onCrawlAll || crawlingAll || activeSourceCount === 0}
+              >
+                <IconBolt size={15} stroke={1.75} />
+                {crawlingAll ? `抓取中…（${activeSourceCount} 个）` : `全部抓取（${activeSourceCount}）`}
+              </Button>
+            </div>
           </div>
         </CardHeader>
         <CardContent className="space-y-4">

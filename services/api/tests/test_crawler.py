@@ -11,7 +11,10 @@ from app.crawlers.runner import (
     CrawlError,
     CrawlResult,
     crawl_source,
+    extract_readable_text,
+    extract_title,
 )
+from app.domain.policy.service import parse_suggestions
 
 
 class _QuietHandler(http.server.BaseHTTPRequestHandler):
@@ -64,6 +67,103 @@ def _serve() -> tuple[str, int, http.server.ThreadingHTTPServer]:
     thread.start()
     host, port = server.server_address[:2]
     return str(host), int(port), server
+
+
+class HtmlDecodingTests(unittest.TestCase):
+    """国内政务站大量用 GBK，且常在响应头谎报 charset=utf-8。"""
+
+    _HTML = (
+        "<html><head><title>岳阳市医疗保障局</title></head>"
+        "<body><p>截至2023年底，我市常住人口499.14万人，占比20.58%。</p></body></html>"
+    )
+
+    def test_gbk_body_survives_even_when_header_claims_utf8(self):
+        """旧实现固定按 UTF-8 + errors='ignore' 解，会把 GBK 中文整段静默删掉。"""
+        content = self._HTML.encode("gb18030")
+
+        text = extract_readable_text(content, "text/html; charset=utf-8")
+
+        self.assertIsNotNone(text)
+        self.assertIn("常住人口", text)
+        self.assertIn("499.14", text)
+
+    def test_title_decoded_from_gbk_page(self):
+        content = self._HTML.encode("gb18030")
+
+        self.assertEqual(extract_title(content, "text/html; charset=utf-8"), "岳阳市医疗保障局")
+
+    def test_utf8_page_still_works(self):
+        content = self._HTML.encode("utf-8")
+
+        text = extract_readable_text(content, "text/html; charset=utf-8")
+
+        self.assertIsNotNone(text)
+        self.assertIn("常住人口", text)
+
+    def test_declared_gb2312_is_treated_as_gb18030(self):
+        content = self._HTML.encode("gb18030")
+
+        text = extract_readable_text(content, "text/html; charset=gb2312")
+
+        self.assertIsNotNone(text)
+        self.assertIn("常住人口", text)
+
+
+class PolicySuggestionParserTests(unittest.TestCase):
+    def test_parser_extracts_supported_policy_and_city_fields(self):
+        text = (
+            "长沙市为新一线城市；常住人口 499.14 万人；60岁以上人口占比 20.58%；"
+            "80岁以上人口占比 3.2%；职工医保参保人数 210 万人；医保基金净结余 12.6 亿元；"
+            "区域总面积 11819 平方公里；单小时服务单价 66 元；基金支付比例 80%；"
+            "最低护理员纳保数 20 人；最低护士配置数 2 人；失能状态持续时长要求 6 个月；"
+            "评估通过率门槛 70%；单次服务时长 2 小时；每月必选服务项数 3 项；"
+            "辅具政策纳入试点，支持亲情照护模式。"
+        )
+
+        result = {item["fieldId"]: item["value"] for item in parse_suggestions(text)}
+
+        self.assertEqual(result["C2"], "新一线")
+        self.assertEqual(result["C3"], 499.14)
+        self.assertEqual(result["C4"], 0.2058)
+        self.assertEqual(result["C5"], 0.032)
+        self.assertEqual(result["C10"], 210)
+        self.assertEqual(result["C11"], 12.6)
+        self.assertEqual(result["C13"], 11819)
+        self.assertEqual(result["P1"], 66)
+        self.assertEqual(result["P2"], 0.8)
+        self.assertEqual(result["P4"], 20)
+        self.assertEqual(result["P5"], 2)
+        self.assertEqual(result["P6"], 6)
+        self.assertEqual(result["P7"], 0.7)
+        self.assertEqual(result["P8"], 2)
+        self.assertEqual(result["P9"], 3)
+        self.assertEqual(result["P10"], "是")
+        self.assertEqual(result["P11"], "是")
+
+    def test_parser_does_not_estimate_disability_rate_fields(self):
+        result = parse_suggestions(
+            "失能率_60-69岁约 12%，失能率_70-79岁约 18%，失能率_80岁以上约 25%。"
+        )
+        field_ids = {item["fieldId"] for item in result}
+
+        self.assertNotIn("C6", field_ids)
+        self.assertNotIn("C7", field_ids)
+        self.assertNotIn("C8", field_ids)
+
+    def test_parser_converts_percent_to_decimal_and_keeps_quotes(self):
+        result = parse_suggestions("基金支付比例为 80%，评估通过率门槛为 70%。")
+        by_id = {item["fieldId"]: item for item in result}
+
+        self.assertEqual(by_id["P2"]["value"], 0.8)
+        self.assertEqual(by_id["P7"]["value"], 0.7)
+        self.assertIn("80%", by_id["P2"]["quote"])
+
+    def test_parser_preserves_negative_boolean_policy_statements(self):
+        result = parse_suggestions("辅具政策未纳入试点，暂不支持亲情照护模式。")
+        by_id = {item["fieldId"]: item["value"] for item in result}
+
+        self.assertEqual(by_id["P10"], "否")
+        self.assertEqual(by_id["P11"], "否")
 
 
 class CrawlerSecurityTests(unittest.TestCase):

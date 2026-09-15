@@ -268,6 +268,55 @@ class CrawlApiTests(unittest.TestCase):
         self.assertFalse(by_name["长沙医保局"]["looksAnnual"])
         self.assertEqual(by_name["长沙医保局"]["level"], "aging")
 
+    def test_bulk_sources_verifies_and_disables_unreachable(self):
+        """批量预置来源：可达的留用并落档；不可达的自动停用（本仓库没有删除来源的接口）。"""
+        response = self.client.post(
+            "/api/policies/cities/changsha/sources/bulk",
+            json={
+                "sources": [
+                    {"name": "可用来源", "url": f"{self.base}/policy"},
+                    {"name": "不可达", "url": f"{self.base}/missing"},
+                    {"name": "非法协议", "url": "ftp://example.test/x"},
+                ]
+            },
+        )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        body = response.json()
+        self.assertEqual(body["total"], 3)
+        self.assertEqual(body["verified"], 1)
+        self.assertEqual(body["unreachable"], 1)
+        self.assertEqual(body["rejected"], 1)
+
+        by_name = {item["name"]: item for item in body["results"]}
+        self.assertEqual(by_name["可用来源"]["status"], "verified")
+        self.assertEqual(by_name["可用来源"]["httpStatus"], 200)
+        self.assertTrue(by_name["可用来源"]["title"])
+
+        sources = {source["name"]: source for source in self.repository.list_data_sources()}
+        # 不可达的被停用，而不是留成会反复失败的活跃来源
+        self.assertEqual(sources["不可达"]["status"], "paused")
+        self.assertIn("不可达", sources["不可达"]["note"])
+        # 非法协议根本不建来源
+        self.assertNotIn("非法协议", sources)
+        # 成功的会留下抓取记录（原文已落档）
+        self.assertEqual(len(self.repository.list_crawl_artifacts(source_id=by_name["可用来源"]["sourceId"])), 1)
+
+    def test_bulk_sources_reports_duplicates_without_recreating(self):
+        self._make_source(f"{self.base}/policy")
+
+        response = self.client.post(
+            "/api/policies/cities/changsha/sources/bulk",
+            json={"sources": [{"name": "重复", "url": f"{self.base}/policy"}]},
+        )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        body = response.json()
+        self.assertEqual(body["duplicate"], 1)
+        self.assertEqual(body["verified"], 0)
+        # 没有多建出来
+        self.assertEqual(len(self.repository.list_data_sources()), 1)
+
     def test_source_config_fields_round_trip(self):
         source = self._make_source(
             f"{self.base}/policy",

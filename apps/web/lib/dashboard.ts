@@ -53,6 +53,28 @@ export type DashboardAlert = {
   href: string;
 };
 
+export type DashboardPolicyCitySummary = {
+  cityId: string;
+  cityName: string;
+  sourceCount: number;
+  activeSourceCount: number;
+  errorSourceCount: number;
+  crawlCount: number;
+  lastFetchedAt: string | null;
+  suggestionCount: number;
+  projectId: string | null;
+};
+
+export type DashboardPolicySummary = {
+  pendingReviewCount: number;
+  sourceCount: number;
+  activeSourceCount: number;
+  crawlCount: number;
+  suggestionCount: number;
+  cities: DashboardPolicyCitySummary[];
+  alerts: DashboardAlert[];
+};
+
 export type DashboardOverviewResponse = {
   scope: DashboardScope;
   period: DashboardPeriod;
@@ -73,8 +95,14 @@ export type DashboardOverviewResponse = {
   };
   cities: DashboardCity[];
   trend: Array<{ month: number; stage: string | null; revenue: number | null; netProfit: number | null; cumulativeCashFlow: number | null }>;
+  /** 按城市分组的月度趋势（`trend` 是跨城市求和的合计，多城下回答不了「哪条线是哪个城市」）。 */
+  trendByCity?: Array<{
+    cityId: string;
+    cityName: string;
+    points: Array<{ month: number; stage: string | null; revenue: number | null; netProfit: number | null; cumulativeCashFlow: number | null }>;
+  }>;
   alerts: DashboardAlert[];
-  policySummary: { pendingReviewCount: number; cities: Array<Record<string, unknown>>; alerts: DashboardAlert[] };
+  policySummary: DashboardPolicySummary;
 };
 
 export function buildDashboardQuery(query: DashboardQuery): string {
@@ -101,6 +129,21 @@ export function formatDashboardNumber(value: number | null | undefined, maximumF
 
 export function formatDashboardMoney(value: number | null | undefined): string {
   return value === null || value === undefined ? "—" : `${formatDashboardNumber(value)} 元`;
+}
+
+/**
+ * 坐标轴刻度专用的紧凑数字：`1.2亿` / `3400万`。
+ *
+ * 图表里动辄是 3.6e7 这种 9 位数，`36,000,000` 有 10 个字符 —— 窄卡片（对比图只有
+ * 300 多像素宽）里刻度会互相挤压、甚至被容器左边缘裁掉。中文语境看「3600万」也更直观。
+ * **只用于轴刻度**；tooltip 仍用 formatDashboardNumber 展示精确值。
+ */
+export function formatDashboardCompactNumber(value: number | null | undefined): string {
+  if (value === null || value === undefined || !Number.isFinite(value)) return "—";
+  const trim = (scaled: number) => String(Number(scaled.toFixed(1)));
+  if (Math.abs(value) >= 1e8) return `${trim(value / 1e8)}亿`;
+  if (Math.abs(value) >= 1e4) return `${trim(value / 1e4)}万`;
+  return formatDashboardNumber(value);
 }
 
 export function formatDashboardDate(value: string | null | undefined): string {

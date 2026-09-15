@@ -86,6 +86,23 @@ class U1ApiTests(unittest.TestCase):
         self.assertEqual(len(snapshots.json()), 2)
         self.assertNotEqual(snapshots.json()[0]["snapshotId"], snapshots.json()[1]["snapshotId"])
 
+    def test_create_project_returns_onboarding_job_and_baseline_scenario(self):
+        response = self.client.post(
+            "/api/projects",
+            json={"name": "成都自动入场", "city": "成都"},
+        )
+        self.assertEqual(response.status_code, 201)
+        body = response.json()
+        self.assertIn("project", body)
+        self.assertIn("onboarding", body)
+        self.assertEqual(body["project"]["cityId"], "成都")
+        self.assertEqual(body["onboarding"]["status"], "queued")
+        self.assertEqual(body["project"]["scenarios"][0]["name"], "基准")
+
+        status = self.client.get(f"/api/projects/{body['project']['id']}/onboarding")
+        self.assertEqual(status.status_code, 200)
+        self.assertEqual(status.json()["projectId"], body["project"]["id"])
+
     def test_input_update_exposes_stale_state_and_preserves_snapshot_history(self):
         project = self.client.post("/api/projects", json={"name": "stale API 测试", "city": "长沙"}).json()
         scenario = self.client.post(f"/api/projects/{project['id']}/scenarios", json={"name": "基准"}).json()

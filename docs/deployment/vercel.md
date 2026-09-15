@@ -1,4 +1,6 @@
-# Vercel 部署说明
+# Vercel 部署说明（历史方案，当前未完成）
+
+当前用户选择的是本地 SQLite Demo，本文件只保留未来生产部署参考；本轮不执行生产部署。
 
 当前仓库按两个 Vercel 项目部署：
 
@@ -35,7 +37,7 @@ PYTHONPATH=services/api uv run --project services/api python services/api/script
 ## 发布顺序
 
 1. 创建并绑定 API 项目的 Postgres 数据库和私有 Blob 存储。
-2. 部署 API Preview，检查 `/api/health`、项目读写、测算快照和政策文件上传。
+2. 部署 API Preview，检查 `/api/health`、项目读写、测算快照和政策官网抓取。
 3. 将 API Preview URL 写入前端 `NEXT_PUBLIC_API_BASE_URL`，部署前端 Preview。
 4. 验收全城市总览、城市项目、政策中心和结果同步。
 5. 备份并迁移正式数据后，再提升为 Production。

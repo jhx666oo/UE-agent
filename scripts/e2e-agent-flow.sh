@@ -2,12 +2,12 @@
 # 端到端验证脚本：模拟 WorkBuddy 的完整一轮回传流程。
 # 用法：bash scripts/e2e-agent-flow.sh
 #
-# 覆盖：派活清单 → 抓取落档（SHA256 变更检测）→ 回传校验 → 建议值写入 → 候选来源入池
+# 覆盖：建城市 → 官网来源 → 全部抓取 → 原文回看 → 建议值 → WorkBuddy 回传 → 总览 → 导出
 #
 # 注意：本脚本依赖 UE_AGENT_E2E_ALLOW_PRIVATE=1 放行回环地址，仅供本机验证；
 # 生产抓取路径默认拒绝私有网段（crawlers 模块的 SSRF 防护）。
 # JSON 解析统一交给 scripts/e2e_assert.py，避免 shell 与 Python 的引号嵌套问题。
-set -uo pipefail
+set -euo pipefail
 
 cd "$(dirname "$0")/.."
 ROOT="$PWD"
@@ -30,11 +30,12 @@ cleanup() {
 }
 trap cleanup EXIT
 
-echo "==> 启动假政策页服务（127.0.0.1:$FIXTURE_PORT）"
+echo "==> 启动假政策页服务（127.0.0.1:${FIXTURE_PORT}）"
 PYTHONPATH=services/api "$PY" services/api/scripts/e2e_fixture_server.py "$FIXTURE_PORT" &
 FIX_PID=$!
 
-echo "==> 启动 API（127.0.0.1:$PORT）"
+echo "==> 启动 API（127.0.0.1:${PORT}）"
+export UE_AGENT_DISCOVERY_SEARCH_URL="http://127.0.0.1:${FIXTURE_PORT}/search?query={query}"
 PYTHONPATH=services/api uv run --project services/api --extra test \
   python -m uvicorn app.main:app --host 127.0.0.1 --port "$PORT" --log-level warning &
 API_PID=$!
@@ -52,26 +53,47 @@ echo "健康检查：$HEALTH"
 
 echo
 echo "==> 1. 建项目 + 场景（长沙）"
-PROJECT_ID=$(curl -s --noproxy '*' -X POST "$BASE/api/projects" \
+PROJECT_RESPONSE=$(curl -s --noproxy '*' -X POST "$BASE/api/projects" \
   -H 'Content-Type: application/json' \
-  -d '{"name":"长沙养老测算","city":"长沙","cityId":"changsha"}' \
-  | "$PY" -c "import sys,json;print(json.load(sys.stdin)['id'])")
-SCENARIO_ID=$(curl -s --noproxy '*' -X POST "$BASE/api/projects/$PROJECT_ID/scenarios" \
-  -H 'Content-Type: application/json' -d '{"name":"基准情景"}' \
-  | "$PY" -c "import sys,json;print(json.load(sys.stdin)['id'])")
+  -d '{"name":"长沙养老测算","city":"长沙","cityId":"changsha"}')
+PROJECT_ID=$(echo "$PROJECT_RESPONSE" | "$PY" -c "import sys,json;print(json.load(sys.stdin)['project']['id'])")
+SCENARIO_ID=$(echo "$PROJECT_RESPONSE" | "$PY" -c "import sys,json;print(json.load(sys.stdin)['scenario']['id'])")
+ONBOARDING_ID=$(echo "$PROJECT_RESPONSE" | "$PY" -c "import sys,json;print(json.load(sys.stdin)['onboarding']['id'])")
+BASELINE_INPUTS=$(curl -s --noproxy '*' "$BASE/api/projects/$PROJECT_ID/scenarios/$SCENARIO_ID" \
+  | "$PY" -c "import sys,json;print(json.dumps(json.load(sys.stdin)['inputs'],ensure_ascii=False,separators=(',',':')))" )
+export E2E_BASELINE_INPUTS="$BASELINE_INPUTS"
 echo "   projectId=$PROJECT_ID"
 echo "   scenarioId=$SCENARIO_ID"
+for _ in $(seq 1 100); do
+  ONBOARDING=$(curl -s --noproxy '*' "$BASE/api/projects/$PROJECT_ID/onboarding")
+  ONBOARDING_STATUS=$(echo "$ONBOARDING" | "$PY" -c "import sys,json;print(json.load(sys.stdin).get('status',''))")
+  case "$ONBOARDING_STATUS" in
+    completed|partial_failed|failed) break ;;
+  esac
+  sleep 0.2
+done
+echo "$ONBOARDING" | "$PY" "$ASSERT" onboarding
 
 echo
-echo "==> 2. 配置官网来源（长沙医保局）"
-SOURCE_ID=$(curl -s --noproxy '*' -X POST "$BASE/api/policies/sources" \
-  -H 'Content-Type: application/json' \
-  -d "{\"cityId\":\"changsha\",\"name\":\"长沙医保局\",\"url\":\"http://127.0.0.1:${FIXTURE_PORT}/policy\"}" \
-  | "$PY" -c "import sys,json;print(json.load(sys.stdin)['id'])")
+echo "==> 2. 读取自动发现并入池的官网来源"
+SOURCE_ID=$(curl -s --noproxy '*' "$BASE/api/policies/sources?cityId=changsha" \
+  | "$PY" -c "import sys,json;items=json.load(sys.stdin);assert items, items;print(items[0]['id'])")
 echo "   sourceId=$SOURCE_ID"
 
 echo
-echo "==> 3. 派活：GET /policies/crawl-targets"
+echo "==> 3. 直接一键抓取：POST /policies/cities/{cityId}/crawl-all"
+curl -s --noproxy '*' -X POST "$BASE/api/policies/cities/changsha/crawl-all" \
+  | "$PY" "$ASSERT" crawl-all
+
+echo
+echo "==> 3b. 查看已保存的原文与抓取记录"
+curl -s --noproxy '*' "$BASE/api/policies/sources/$SOURCE_ID/artifacts" | "$PY" "$ASSERT" artifacts
+ARTIFACT_ID=$(curl -s --noproxy '*' "$BASE/api/policies/sources/$SOURCE_ID/artifacts" \
+  | "$PY" -c "import sys,json;print(json.load(sys.stdin)[0]['artifactId'])")
+curl -s --noproxy '*' "$BASE/api/policies/artifacts/$ARTIFACT_ID/content" | "$PY" "$ASSERT" artifact-content
+
+echo
+echo "==> 3c. 派活：GET /policies/crawl-targets"
 curl -s --noproxy '*' "$BASE/api/policies/crawl-targets" | "$PY" "$ASSERT" targets
 
 echo
@@ -97,6 +119,7 @@ curl -s --noproxy '*' -X POST "$BASE/api/policies/extraction-submissions" \
   "agentVersion": "policy-ai-crawler@0.1.0",
   "submissions": [{
     "sourceId": "'"$SOURCE_ID"'",
+    "artifactId": "'"$ARTIFACT_ID"'",
     "facts": [
       {"fieldId":"P1","value":66,"unit":"元/小时","confidence":0.95,"quote":"单小时服务单价调整为 66 元"},
       {"fieldId":"P2","value":0.8,"unit":"%","confidence":0.93,"quote":"基金支付比例为 80%"},
@@ -115,8 +138,19 @@ curl -s --noproxy '*' -X POST "$BASE/api/policies/extraction-submissions" \
 }' | "$PY" "$ASSERT" submission
 
 echo
-echo "==> 6. 校验写入城市公式页的灰色建议值"
+echo "==> 6. 校验写入城市公式页的灰色建议值（17 个可明确解析字段）"
 curl -s --noproxy '*' "$BASE/api/cities/changsha/values" | "$PY" "$ASSERT" city-values
+
+echo
+echo "==> 6b. 总览读取城市结果"
+curl -s --noproxy '*' "$BASE/api/dashboard/overview" | "$PY" "$ASSERT" dashboard
+
+echo
+echo "==> 6c. 导出建议值（CSV + JSON）"
+curl -s --noproxy '*' "$BASE/api/policies/export?cityId=changsha&format=csv&dataset=fields" \
+  | "$PY" "$ASSERT" export-csv
+curl -s --noproxy '*' "$BASE/api/policies/export?cityId=changsha&format=json" \
+  | "$PY" "$ASSERT" export-json
 
 echo
 echo "==> 7. 候选来源入池（含一条非法链接）"

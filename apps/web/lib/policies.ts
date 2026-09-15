@@ -60,6 +60,13 @@ export type PolicyCitySummary = {
   cityName: string;
   documentCount: number;
   latestUpdatedAt: string | null;
+  sourceCount: number;
+  activeSourceCount: number;
+  errorSourceCount: number;
+  crawlCount: number;
+  lastFetchedAt: string | null;
+  suggestionCount: number;
+  projectId: string | null;
   pendingReviewCount: number;
   approvedFactCount: number;
   completeness: number | null;
@@ -80,6 +87,10 @@ export type PolicyOverviewResponse = {
   cities: PolicyCitySummary[];
   pendingReviewCount: number;
   approvedFactCount: number;
+  sourceCount: number;
+  activeSourceCount: number;
+  crawlCount: number;
+  suggestionCount: number;
   alerts: PolicyAlert[];
 };
 
@@ -105,6 +116,12 @@ export type PolicyCityDetailResponse = {
   cityName: string;
   documents: PolicyDocument[];
   dataSources: DataSource[];
+  sourceCount: number;
+  activeSourceCount: number;
+  errorSourceCount: number;
+  crawlCount: number;
+  lastFetchedAt: string | null;
+  suggestionCount: number;
   facts: unknown[];
   approvedFacts: unknown[];
   pendingReviewCount: number;
@@ -120,6 +137,9 @@ export type CityPolicyExtract = {
   activeSourceCount: number;
   latestFetchedAt: string | null;
   latestUpdatedAt: string | null;
+  crawlCount: number;
+  errorSourceCount: number;
+  suggestionCount: number;
   pendingReviewCount: number;
   approvedFactCount: number;
   pendingFacts: PolicyFact[];
@@ -144,7 +164,8 @@ export function buildCityPolicyExtract(detail: PolicyCityDetailResponse): CityPo
   const fetchedTimes = detail.dataSources
     .map((source) => source.lastFetchedAt)
     .filter((value): value is string => Boolean(value))
-    .concat(detail.documents.map((document) => document.updatedAt).filter(Boolean));
+    .concat(detail.documents.map((document) => document.updatedAt).filter(Boolean))
+    .concat(detail.lastFetchedAt ? [detail.lastFetchedAt] : []);
   const updatedTimes = [
     ...detail.dataSources.map((source) => source.updatedAt),
     ...detail.documents.map((document) => document.updatedAt),
@@ -155,10 +176,13 @@ export function buildCityPolicyExtract(detail: PolicyCityDetailResponse): CityPo
     cityName: detail.cityName,
     hasData: detail.dataSources.length > 0 || detail.documents.length > 0 || facts.length > 0,
     documentCount: detail.documents.length,
-    sourceCount: detail.dataSources.length,
-    activeSourceCount: activeSources.length,
+    sourceCount: detail.sourceCount ?? detail.dataSources.length,
+    activeSourceCount: detail.activeSourceCount ?? activeSources.length,
     latestFetchedAt: fetchedTimes.length ? fetchedTimes.sort().at(-1)! : null,
     latestUpdatedAt: updatedTimes.length ? updatedTimes.sort().at(-1)! : null,
+    crawlCount: detail.crawlCount ?? 0,
+    errorSourceCount: detail.errorSourceCount ?? 0,
+    suggestionCount: detail.suggestionCount ?? 0,
     pendingReviewCount: facts.filter((fact) => fact.status === "candidate").length,
     approvedFactCount: facts.filter((fact) => fact.status === "approved").length,
     pendingFacts: facts.filter((fact) => fact.status === "candidate"),
@@ -326,6 +350,30 @@ export function crawlAllPolicySources(cityId: string) {
   return apiFetch<CrawlAllSummary>(`/api/policies/cities/${encodeURIComponent(cityId)}/crawl-all`, {
     method: "POST",
   });
+}
+
+export type PolicyExportFormat = "csv" | "json" | "zip";
+export type PolicyExportDataset = "fields" | "sources" | "artifacts";
+
+/** 生成浏览器下载地址；导出内容继续由 API 统一带来源和抓取时间。 */
+export function getPolicyExportUrl({
+  cityId,
+  sourceId,
+  format = "csv",
+  scope = cityId ? "city" : "global",
+  dataset = "fields",
+}: {
+  cityId?: string;
+  sourceId?: string;
+  format?: PolicyExportFormat;
+  scope?: "global" | "city" | "compare";
+  dataset?: PolicyExportDataset;
+} = {}) {
+  const params = new URLSearchParams({ format, scope });
+  if (cityId) params.set("cityId", cityId);
+  if (sourceId) params.set("sourceId", sourceId);
+  if (format !== "zip") params.set("dataset", dataset);
+  return buildApiUrl(`/api/policies/export?${params.toString()}`);
 }
 
 /** 来源新鲜度等级：stale=疑似过期（年度文档长期无更新）、aging=长期未变、unknown=还没抓过。 */

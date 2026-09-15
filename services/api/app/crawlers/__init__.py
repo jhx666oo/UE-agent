@@ -31,6 +31,11 @@ _TITLE_PATTERN = re.compile(r"<title[^>]*>(.*?)</title>", re.IGNORECASE | re.DOT
 _SCRIPT_PATTERN = re.compile(r"<script\b.*?</script>|<style\b.*?</style>", re.IGNORECASE | re.DOTALL)
 _TAG_PATTERN = re.compile(r"<[^>]+>")
 _WHITESPACE_PATTERN = re.compile(r"\s+")
+# 响应头 / <meta> 里的 charset 声明。
+_CHARSET_PATTERN = re.compile(r"charset\s*=\s*[\"']?\s*([\w-]+)", re.IGNORECASE)
+_META_CHARSET_PATTERN = re.compile(rb"charset\s*=\s*[\"']?\s*([\w-]+)", re.IGNORECASE)
+# GB2312 / GBK 一律按 gb18030 解 —— 它是这两者的超集，能兜住绝大多数中文站。
+_CHARSET_ALIASES = {"gb2312": "gb18030", "gbk": "gb18030"}
 
 
 class CrawlError(Exception):
@@ -102,11 +107,45 @@ def _bounded_max_bytes(max_bytes: int | None) -> int:
     return limit
 
 
+def decode_html(content: bytes, content_type: str) -> str:
+    """把 HTML 字节解成文本 —— 绝不静默丢字节。
+
+    原实现是固定的 `content.decode("utf-8", errors="ignore")`。国内政务站大量使用
+    GBK/GB2312，而且**经常在响应头里谎报 `charset=utf-8`**；这种情况下中文会作为
+    「非法 UTF-8 字节」被 `errors="ignore"` **整段删掉**，正文只剩 ASCII 骨架，
+    于是 AI 一个值都抽不到（实测岳阳某答复页：原文 8324B 只提出 771 字导航，
+    而原文里 499.14 / 20.58 / 59.78 / 19.9 全都在）。
+
+    候选顺序：响应头声明 → `<meta>` 声明 → utf-8 → gb18030；都不成才用替换符兜底
+    （宁可看到乱码，也不要静默丢掉整段正文）。
+    """
+    candidates: list[str] = []
+    declared = _CHARSET_PATTERN.search(content_type or "")
+    if declared:
+        candidates.append(declared.group(1))
+    meta = _META_CHARSET_PATTERN.search(content[:4096])
+    if meta:
+        candidates.append(meta.group(1).decode("ascii", "ignore"))
+    candidates.extend(["utf-8", "gb18030"])
+
+    tried: set[str] = set()
+    for name in candidates:
+        key = _CHARSET_ALIASES.get(name.strip().lower().replace("_", "-"), name.strip().lower())
+        if not key or key in tried:
+            continue
+        tried.add(key)
+        try:
+            return content.decode(key)
+        except (LookupError, UnicodeDecodeError):
+            continue
+    return content.decode("utf-8", errors="replace")
+
+
 def extract_title(content: bytes, content_type: str) -> str | None:
     if "html" not in content_type.lower():
         return None
     try:
-        head = content[:65536].decode("utf-8", errors="ignore")
+        head = decode_html(content[:65536], content_type)
     except Exception:
         return None
     match = _TITLE_PATTERN.search(head)
@@ -119,7 +158,7 @@ def extract_readable_text(content: bytes, content_type: str) -> str | None:
     """HTML 去除脚本样式与标签后的可读文本，供解析器使用。"""
     if "html" not in content_type.lower():
         return None
-    text = content.decode("utf-8", errors="ignore")
+    text = decode_html(content, content_type)
     text = _SCRIPT_PATTERN.sub(" ", text)
     text = _TAG_PATTERN.sub(" ", text)
     text = text.replace("&nbsp;", " ").replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">")

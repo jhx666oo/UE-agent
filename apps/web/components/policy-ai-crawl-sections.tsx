@@ -76,7 +76,10 @@ export function PolicyCrawlStatusSection({
 }>) {
   const latest = submissions[0];
   // fieldsToFill 是「城市级」集合：同一城市的每个来源都会列出同一批待填字段。
-  // 因此必须先对城市内各来源取并集，再跨城市求和 —— 直接累加会把同一字段重复计数。
+  // 先对城市内各来源取并集，再跨城市求和 —— 直接累加会把同一字段重复计数。
+  // 注意：求和结果是**跨城市总量**，分母是**单市**的字段数，所以文案必须写清单位，
+  // 否则会显示成「38 个 / 共 20 个」这种看起来自相矛盾的数。
+  const cityCount = (targets?.cities ?? []).length;
   const totalToFill = (targets?.cities ?? []).reduce((sum, city) => {
     const pending = new Set<string>();
     for (const source of city.sources) {
@@ -115,10 +118,10 @@ export function PolicyCrawlStatusSection({
               </div>
               <div className="rounded-md border border-border p-3">
                 <p className="text-xs text-muted-foreground">本轮待填字段</p>
-                <p className="mt-1 text-sm font-medium">
-                  {totalToFill} 个 / 共 {catalogSize} 个自动爬虫字段
+                <p className="mt-1 text-sm font-medium">{totalToFill} 个</p>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  {cityCount} 个城市 · 每市最多 {catalogSize} 个自动爬虫字段
                 </p>
-                <p className="mt-1 text-xs text-muted-foreground">已采用的字段不再重复抽取</p>
               </div>
               <div className="rounded-md border border-border p-3">
                 <p className="text-xs text-muted-foreground">禁止估算字段</p>

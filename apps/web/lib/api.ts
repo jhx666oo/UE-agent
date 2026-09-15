@@ -79,6 +79,43 @@ export type ProjectRecord = {
   scenarios: ScenarioRecord[];
 };
 
+export type CityOnboardingJobStatus =
+  | "queued"
+  | "discovering"
+  | "sources_ready"
+  | "crawling"
+  | "extracting"
+  | "completed"
+  | "partial_failed"
+  | "failed";
+
+export type CityOnboardingJob = {
+  id: string;
+  projectId: string;
+  cityId: string;
+  cityName: string;
+  status: CityOnboardingJobStatus;
+  phase: string;
+  totalQueries: number;
+  discoveredCount: number;
+  officialSourceCount: number;
+  candidateCount: number;
+  crawledCount: number;
+  suggestionCount: number;
+  errorCount: number;
+  errors: string[];
+  startedAt: string | null;
+  finishedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type CreateProjectResponse = ProjectRecord & {
+  project: ProjectRecord;
+  scenario: ScenarioRecord;
+  onboarding: CityOnboardingJob;
+};
+
 export type ScenarioRecord = {
   id: string;
   name: string;
@@ -189,7 +226,15 @@ export function getModelSpec() {
 }
 
 export function createProject(input: Omit<ProjectRecord, "id" | "createdAt" | "updatedAt" | "scenarios">) {
-  return apiFetch<ProjectRecord>("/api/projects", { method: "POST", body: JSON.stringify(input) });
+  return apiFetch<CreateProjectResponse>("/api/projects", { method: "POST", body: JSON.stringify(input) });
+}
+
+export function getCityOnboarding(projectId: string) {
+  return apiFetch<CityOnboardingJob>(`/api/projects/${encodeURIComponent(projectId)}/onboarding`);
+}
+
+export function retryCityOnboarding(projectId: string) {
+  return apiFetch<CityOnboardingJob>(`/api/projects/${encodeURIComponent(projectId)}/onboarding/retry`, { method: "POST" });
 }
 
 export function getProject(projectId: string) {

@@ -7,6 +7,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from .api.routes import router
+from .domain.policy.discovery import UnconfiguredDiscoveryProvider, WebSearchDiscoveryProvider
 from .repository import PostgresProjectRepository, ProjectRepository, VercelBlobPolicyFileStore
 from .sqlite_repository import SqliteProjectRepository, default_database_path
 
@@ -33,9 +34,13 @@ def create_repository() -> ProjectRepository:
     return SqliteProjectRepository(default_database_path())
 
 
-def create_app(repository: ProjectRepository | None = None) -> FastAPI:
+def create_app(repository: ProjectRepository | None = None, *, discovery_provider=None) -> FastAPI:
     app = FastAPI(title="UE Agent API", version="0.1.0")
     app.state.repository = repository or create_repository()
+    # 测试注入 repository 时默认不访问外部搜索；真实 app 使用可配置的搜索适配器。
+    app.state.discovery_provider = discovery_provider if discovery_provider is not None else (
+        WebSearchDiscoveryProvider() if repository is None else UnconfiguredDiscoveryProvider()
+    )
     # 仅本地端到端验证用：显式设置 UE_AGENT_E2E_ALLOW_PRIVATE=1 才放行回环/私有地址。
     # 生产路径必须保持拒绝（crawlers 模块默认 SSRF 防护）。
     app.state.crawl_allow_private = os.getenv("UE_AGENT_E2E_ALLOW_PRIVATE") == "1"

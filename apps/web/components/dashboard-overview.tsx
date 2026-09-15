@@ -13,7 +13,15 @@ import { DashboardChart } from "@/components/dashboard-chart";
 import { DashboardCityComparison } from "@/components/dashboard-city-comparison";
 import { DashboardFilters } from "@/components/dashboard-filters";
 import { DashboardMetricGrid } from "@/components/dashboard-metric-grid";
-import { getDashboardOverview, resolveViewMode, type DashboardOverviewResponse, type DashboardQuery } from "@/lib/dashboard";
+import { DashboardPolicySummary } from "@/components/dashboard-policy-summary";
+import {
+  getDashboardOverview,
+  resolveDashboardScope,
+  resolveViewMode,
+  MAX_COMPARE_CITIES,
+  type DashboardOverviewResponse,
+  type DashboardQuery,
+} from "@/lib/dashboard";
 
 const DEFAULT_QUERY: DashboardQuery = { scope: "global", cityIds: [], period: 12, includeStale: true };
 
@@ -116,6 +124,28 @@ export function DashboardOverview({
     if (loadData) void refresh(nextQuery);
   }
 
+  /**
+   * 侧边栏「城市对比」直接指向 `/?scope=compare`，但没带任何城市；
+   * 而后端对 compare 视图要求至少 1 个 cityIds，于是点进去必然吃一个错误页。
+   * 这里在城市列表就绪后自动补齐：≥2 个城市就真对比，只有 1 个就降级为单城，
+   * 一个都没有就退回总览 —— 三种情况下都不会再抛错。
+   */
+  useEffect(() => {
+    if (query.scope !== "compare" || query.cityIds.length >= 2) return;
+    if (cities.length === 0) return;
+    const picks = cities.slice(0, MAX_COMPARE_CITIES).map((city) => city.cityId);
+    const nextQuery: DashboardQuery = {
+      ...query,
+      cityIds: picks,
+      scope: resolveDashboardScope(picks),
+    };
+    // 放到定时器里执行：effect 同步体内直接改筛选条件会触发级联渲染
+    // （react-hooks/set-state-in-effect），延后一拍语义不变。
+    const timer = setTimeout(() => changeQuery(nextQuery), 0);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [query.scope, query.cityIds.length, cities.length]);
+
   if (loading && !data) {
     return <div className="space-y-5" aria-label="正在加载总览"><Skeleton className="h-24 w-full" /><div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3"><Skeleton className="h-28" /><Skeleton className="h-28" /><Skeleton className="h-28" /></div><Skeleton className="h-80 w-full" /></div>;
   }
@@ -162,9 +192,10 @@ export function DashboardOverview({
         <>
           {hasValidCity ? <DashboardMetricGrid summary={data.summary} /> : <EmptyState title="暂无有效测算结果" description="当前筛选范围内还没有成功测算的城市。进入城市测算配置参数并运行测算后，这里会自动汇总结果。" actionLabel="进入城市测算" actionHref="/projects" />}
           <div className="grid gap-5 xl:grid-cols-12">
-            <div className="space-y-5 xl:col-span-8"><DashboardChart title="经营趋势" type="trend" data={data.trend} /><DashboardCityComparison cities={data.cities} /></div>
+            <div className="space-y-5 xl:col-span-8"><DashboardChart title="经营趋势" type="trend" data={data.trend} series={data.trendByCity} /><DashboardCityComparison cities={data.cities} /></div>
             <div className="space-y-5 xl:col-span-4"><DashboardChart title="月收入与月净利润对比" type="comparison" data={data.cities.map((city) => ({ cityName: city.cityName, monthlyRevenue: city.metrics.monthlyRevenue, monthlyNetProfit: city.metrics.monthlyNetProfit })).filter((city) => city.monthlyRevenue !== null || city.monthlyNetProfit !== null)} /><DashboardAlerts alerts={alerts} /></div>
           </div>
+          <DashboardPolicySummary summary={data.policySummary} />
         </>
       )}
     </div>
