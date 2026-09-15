@@ -130,6 +130,8 @@ curl -s --noproxy '*' -X POST "$BASE_URL/api/policies/cities/<城市ID>/crawl-al
 ```
 
 看返回的 `changed`：**只有「有更新」的来源才值得送 AI 抽取**（`unchanged` 说明内容没变）。
+若结果出现 `browser_required` 或 `browserRequired > 0`，说明来源已进入统一
+`/api/policies/fallback-tasks` 队列，不要反复点击抓取；交给 `policy-ai-crawler` 的 WorkBuddy 浏览器流程处理。
 抽取规则（quote 必填、C6/C7/C8 禁止估算、P2 存 0–1、枚举归一化……）全部见
 skill **`policy-ai-crawler`**，不要在这里重复实现。
 
@@ -215,7 +217,7 @@ AI 会调用发布能力，参数全部用默认推荐值：
 
 - [ ] `GET /api/policies/crawl-targets` 的 `cities[]` 里**出现了这个城市**（没来源的城市不会出现）
 - [ ] 该城市来源全部 `active`，没有 `unreachable` 遗留
-- [ ] `POST .../crawl-all` 返回 `failed = 0`
+- [ ] `POST .../crawl-all` 返回 `failed = 0`；若存在 `browserRequired`，确认对应任务已进入兜底队列并留在待处理状态
 - [ ] `GET /api/policies/cities/<城市ID>/source-freshness` 无 `stale`
 - [ ] 抽到的建议值**带来源归属**（回传时传 `sourceId`，否则表格里来源列是空的）
 - [ ] 明确告诉用户：**建议值需人工在城市公式页逐条「采用」才生效**

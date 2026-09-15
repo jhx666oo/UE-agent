@@ -41,6 +41,7 @@ from .schemas import (
     DataSourceUpdate,
     ExtractionSubmissionRequest,
     FetchRequestBatch,
+    FallbackTaskFailure,
     FieldValueUpdate,
     ProjectCreate,
     ScenarioCreate,
@@ -492,7 +493,8 @@ def crawl_all_policy_sources(city_id: str, request: Request) -> dict[str, Any]:
         "crawledAt": datetime.now(timezone.utc).isoformat(),
         "total": len(results),
         "succeeded": sum(1 for item in results if item["status"] == "success"),
-        "failed": sum(1 for item in results if item["status"] in {"failed", "browser_required"}),
+        "failed": sum(1 for item in results if item["status"] == "failed"),
+        "browserRequired": sum(1 for item in results if item["status"] == "browser_required"),
         "skipped": sum(1 for item in results if item["status"] == "skipped"),
         # 未变 / 有更新 直接对应「省下的抽取量」与「值得送 AI 的量」
         "unchanged": sum(1 for item in results if item.get("changeStatus") == "unchanged"),
@@ -788,9 +790,59 @@ def policy_fetch_requests(payload: FetchRequestBatch, request: Request) -> dict[
         "requested": len(payload.requests),
         "succeeded": sum(1 for item in results if item.get("status") == "success"),
         "failed": sum(1 for item in results if item.get("status") == "failed"),
+        "browserRequired": sum(1 for item in results if item.get("status") == "browser_required"),
         "unchanged": sum(1 for item in results if item.get("changeStatus") == "unchanged"),
         "results": results,
     }
+
+
+@router.get("/policies/fallback-tasks", response_model=None)
+def list_policy_fallback_tasks(
+    request: Request, cityId: str | None = None, status: str | None = None
+) -> dict[str, Any]:
+    """读取 WorkBuddy 浏览器兜底任务；默认返回全部状态，方便审计与重试。"""
+    return {
+        "tasks": PolicyService(repository_from_request(request)).list_browser_fallback_tasks(
+            city_id=cityId,
+            status=status,
+        )
+    }
+
+
+@router.post("/policies/fallback-tasks/{task_id}/claim", response_model=None)
+def claim_policy_fallback_task(task_id: str, request: Request) -> dict[str, Any] | JSONResponse:
+    """WorkBuddy 领取一个任务；重复领取 in_progress 任务是幂等的。"""
+    unauthorized = _agent_token_required(request)
+    if unauthorized is not None:
+        return unauthorized
+    try:
+        task = PolicyService(repository_from_request(request)).claim_browser_fallback_task(task_id)
+        return {"task": task}
+    except CrawlServiceError as error:
+        return JSONResponse(
+            status_code=error.status_code,
+            content={"error": {"code": error.code, "message": error.message, **error.details}},
+        )
+
+
+@router.post("/policies/fallback-tasks/{task_id}/fail", response_model=None)
+def fail_policy_fallback_task(
+    task_id: str, payload: FallbackTaskFailure, request: Request
+) -> dict[str, Any] | JSONResponse:
+    """WorkBuddy 无法找到官方正文时写回失败原因，下一轮仍可重新领取。"""
+    unauthorized = _agent_token_required(request)
+    if unauthorized is not None:
+        return unauthorized
+    try:
+        task = PolicyService(repository_from_request(request)).fail_browser_fallback_task(
+            task_id, payload.reason
+        )
+        return {"task": task}
+    except CrawlServiceError as error:
+        return JSONResponse(
+            status_code=error.status_code,
+            content={"error": {"code": error.code, "message": error.message, **error.details}},
+        )
 
 
 @router.post("/policies/browser-artifacts", response_model=None)

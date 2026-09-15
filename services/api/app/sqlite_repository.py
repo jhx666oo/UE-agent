@@ -1483,6 +1483,130 @@ class SqliteProjectRepository:
             )
         return {k: v for k, v in artifact.items() if k != "rawContent"}
 
+    # ---------- 浏览器兜底任务 ----------
+
+    @staticmethod
+    def _fallback_task_dict(row: sqlite3.Row) -> dict[str, Any]:
+        return {
+            "id": row["id"],
+            "cityId": row["city_id"],
+            "sourceId": row["source_id"],
+            "researchRunId": row["research_run_id"],
+            "requestedUrl": row["requested_url"],
+            "sourceName": row["source_name"],
+            "status": row["status"],
+            "httpStatus": row["http_status"],
+            "errorCode": row["error_code"],
+            "fallbackAction": row["fallback_action"],
+            "fallbackReason": row["fallback_reason"],
+            "attempts": row["attempts"],
+            "artifactId": row["artifact_id"],
+            "lastError": row["last_error"],
+            "createdAt": row["created_at"],
+            "updatedAt": row["updated_at"],
+        }
+
+    def list_policy_fallback_tasks(
+        self, *, city_id: str | None = None, status: str | None = None
+    ) -> list[dict[str, Any]]:
+        clauses: list[str] = []
+        params: list[Any] = []
+        if city_id is not None:
+            clauses.append("city_id = ?")
+            params.append(city_id)
+        if status is not None:
+            clauses.append("status = ?")
+            params.append(status)
+        where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
+        with self._db() as connection:
+            rows = connection.execute(
+                f"SELECT * FROM policy_fallback_tasks{where} ORDER BY updated_at DESC, id DESC",
+                params,
+            ).fetchall()
+        return [self._fallback_task_dict(row) for row in rows]
+
+    def get_policy_fallback_task(self, task_id: str) -> dict[str, Any]:
+        with self._db() as connection:
+            row = connection.execute(
+                "SELECT * FROM policy_fallback_tasks WHERE id = ?", (task_id,)
+            ).fetchone()
+        if row is None:
+            raise KeyError(task_id)
+        return self._fallback_task_dict(row)
+
+    def get_active_policy_fallback_task(
+        self, *, source_id: str, requested_url: str
+    ) -> dict[str, Any] | None:
+        with self._db() as connection:
+            row = connection.execute(
+                "SELECT * FROM policy_fallback_tasks WHERE source_id = ? AND requested_url = ?"
+                " AND status IN ('queued', 'in_progress') ORDER BY updated_at DESC, id DESC LIMIT 1",
+                (source_id, requested_url),
+            ).fetchone()
+        return self._fallback_task_dict(row) if row is not None else None
+
+    def create_policy_fallback_task(self, data: Mapping[str, Any]) -> dict[str, Any]:
+        now = utc_now()
+        task = {
+            "id": str(data.get("id") or new_id("fallback-task")),
+            "cityId": str(data["cityId"]),
+            "sourceId": str(data["sourceId"]),
+            "researchRunId": data.get("researchRunId"),
+            "requestedUrl": str(data["requestedUrl"]),
+            "sourceName": data.get("sourceName"),
+            "status": str(data.get("status") or "queued"),
+            "httpStatus": data.get("httpStatus"),
+            "errorCode": data.get("errorCode"),
+            "fallbackAction": str(data.get("fallbackAction") or "browser_search"),
+            "fallbackReason": data.get("fallbackReason"),
+            "attempts": int(data.get("attempts") or 0),
+            "artifactId": data.get("artifactId"),
+            "lastError": data.get("lastError"),
+            "createdAt": data.get("createdAt") or now,
+            "updatedAt": data.get("updatedAt") or now,
+        }
+        with self._db() as connection:
+            connection.execute(
+                "INSERT INTO policy_fallback_tasks (id, city_id, source_id, research_run_id, requested_url,"
+                " source_name, status, http_status, error_code, fallback_action, fallback_reason, attempts,"
+                " artifact_id, last_error, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    task["id"], task["cityId"], task["sourceId"], task["researchRunId"], task["requestedUrl"],
+                    task["sourceName"], task["status"], task["httpStatus"], task["errorCode"],
+                    task["fallbackAction"], task["fallbackReason"], task["attempts"], task["artifactId"],
+                    task["lastError"], task["createdAt"], task["updatedAt"],
+                ),
+            )
+        return task
+
+    def update_policy_fallback_task(
+        self, task_id: str, data: Mapping[str, Any]
+    ) -> dict[str, Any]:
+        column_by_key = {
+            "researchRunId": "research_run_id", "requestedUrl": "requested_url", "sourceName": "source_name",
+            "status": "status", "httpStatus": "http_status", "errorCode": "error_code",
+            "fallbackAction": "fallback_action", "fallbackReason": "fallback_reason", "attempts": "attempts",
+            "artifactId": "artifact_id", "lastError": "last_error",
+        }
+        assignments: list[str] = []
+        values: list[Any] = []
+        for key, column in column_by_key.items():
+            if key in data:
+                assignments.append(f"{column} = ?")
+                values.append(data[key])
+        assignments.append("updated_at = ?")
+        values.extend([utc_now(), task_id])
+        with self._db() as connection:
+            updated = connection.execute(
+                f"UPDATE policy_fallback_tasks SET {', '.join(assignments)} WHERE id = ?", values
+            )
+            if updated.rowcount == 0:
+                raise KeyError(task_id)
+            row = connection.execute(
+                "SELECT * FROM policy_fallback_tasks WHERE id = ?", (task_id,)
+            ).fetchone()
+        return self._fallback_task_dict(row)
+
     # ---------- AI 回传链路（WorkBuddy 驱动） ----------
 
     @staticmethod

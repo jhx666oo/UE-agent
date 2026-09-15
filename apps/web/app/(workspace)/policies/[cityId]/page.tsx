@@ -21,6 +21,7 @@ import {
   getPolicyCityDetail,
   getSourceFreshness,
   listExtractionSubmissions,
+  listPolicyFallbackTasks,
   listPolicyResearchRuns,
   listPolicySources,
   listSourceArtifacts,
@@ -34,6 +35,7 @@ import {
   type ExtractionSubmissionRecord,
   type PolicyCityDetailResponse,
   type PolicyResearchRun,
+  type PolicyFallbackTask,
   type SourceCandidate,
   type SourceFreshnessReport,
 } from "@/lib/policies";
@@ -44,6 +46,7 @@ export default function PolicyCityPage() {
   const [data, setData] = useState<PolicyCityDetailResponse | undefined>();
   const [sources, setSources] = useState<DataSource[]>([]);
   const [artifacts, setArtifacts] = useState<CrawlArtifact[]>([]);
+  const [fallbackTasks, setFallbackTasks] = useState<PolicyFallbackTask[]>([]);
   const [targets, setTargets] = useState<CrawlTargetsResponse | undefined>();
   const [candidates, setCandidates] = useState<SourceCandidate[]>([]);
   const [submissions, setSubmissions] = useState<ExtractionSubmissionRecord[]>([]);
@@ -55,12 +58,14 @@ export default function PolicyCityPage() {
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
-    const [detail, nextSources] = await Promise.all([
+    const [detail, nextSources, nextFallbackTasks] = await Promise.all([
       getPolicyCityDetail(cityId),
       listPolicySources(cityId),
+      listPolicyFallbackTasks(cityId),
     ]);
     setData(detail);
     setSources(nextSources);
+    setFallbackTasks(nextFallbackTasks.tasks);
     const artifactLists = await Promise.all(nextSources.map((source) => listSourceArtifacts(source.id)));
     setArtifacts(artifactLists.flat());
   }, [cityId]);
@@ -102,12 +107,13 @@ export default function PolicyCityPage() {
 
   useEffect(() => {
     let active = true;
-    Promise.all([getPolicyCityDetail(cityId), listPolicySources(cityId)])
-      .then(async ([detail, nextSources]) => {
+    Promise.all([getPolicyCityDetail(cityId), listPolicySources(cityId), listPolicyFallbackTasks(cityId)])
+      .then(async ([detail, nextSources, nextFallbackTasks]) => {
         const artifactLists = await Promise.all(nextSources.map((source) => listSourceArtifacts(source.id)));
         if (!active) return;
         setData(detail);
         setSources(nextSources);
+        setFallbackTasks(nextFallbackTasks.tasks);
         setArtifacts(artifactLists.flat());
       })
       .catch((requestError) => {
@@ -254,6 +260,7 @@ export default function PolicyCityPage() {
         data={data}
         sources={sources}
         artifacts={artifacts}
+        fallbackTasks={fallbackTasks}
         onCreateSource={handleCreateSource}
         onToggleSource={handleToggleSource}
         onCrawl={handleCrawl}

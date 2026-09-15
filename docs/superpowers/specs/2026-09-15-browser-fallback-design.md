@@ -2,7 +2,7 @@
 
 ## 1. 目标
 
-当普通 HTTP 抓取遇到 JS 挑战型 WAF、证书握手、超时或其他外站限制时，系统不把本次政策更新静默丢弃，而是生成可执行的浏览器兜底任务。WorkBuddy 使用浏览器或 AI 检索能力获取正文后，将带来源和引用的内容回传 UE-Agent，由 API 统一归档、校验和生成灰色建议值。
+当普通 HTTP 抓取遇到 JS 挑战型 WAF、证书握手、超时、网络限制或响应体过大时，系统不把本次政策更新静默丢弃，而是生成可执行的浏览器兜底任务。WorkBuddy 使用浏览器或 AI 检索能力获取正文后，将带来源和引用的内容回传 UE-Agent，由 API 统一归档、校验和生成灰色建议值。任务处于 `queued`/`in_progress` 时，API 抑制同一来源同一 URL 的重复 HTTP 请求。
 
 该流程必须对现有城市和未来新增城市通用，不为单个城市编写专用抓取器，也不能覆盖人工填写或人工覆盖的测算参数。
 
@@ -38,7 +38,7 @@ WorkBuddy 读取 brief，调用 fetch-requests
         ↓
 普通 httpx 成功 ─────────────→ 保存 artifact → 抽取建议值
         ↓ 失败
-返回 fallbackAction=browser_search
+生成/复用 fallback task，返回 fallbackAction=browser_search
         ↓
 WorkBuddy 打开原 URL / 检索官方镜像
         ↓
@@ -69,6 +69,9 @@ extraction-submissions（沿用现有 quote/字段校验）
 
 网络、证书、超时分别保留可读错误，并返回同样的兜底动作；参数非法、私网地址、停用来源等安全或配置错误不进入浏览器兜底。
 
+响应体超过来源配置的 `maxBytes` 时返回 `CONTENT_TOO_LARGE_BROWSER_FALLBACK` 和
+`fallbackReason=content_too_large`，不保存不完整的 HTTP 原文，交由浏览器读取可见正文。
+
 ### 5.2 浏览器正文归档
 
 新增 `POST /api/policies/browser-artifacts`，只允许 WorkBuddy Agent Token 调用。请求字段：
@@ -80,7 +83,18 @@ extraction-submissions（沿用现有 quote/字段校验）
 
 接口执行 SSRF 无关的回传校验：URL 必须是 http/https；正文不能为空且不超过上限；城市和来源必须存在。保存后生成标准 `crawl_artifact`，计算 SHA256、变更状态和引用路径，更新来源为 active，并返回 `artifactId`。同一来源、同一指纹重复回传应幂等，不产生重复建议值。
 
-### 5.3 来源和城市状态
+### 5.3 兜底任务队列
+
+新增 `policy_fallback_tasks`（JSON 仓储对应 `policyFallbackTasks`）保存城市、来源、原 URL、失败分类、
+任务状态、领取次数、浏览器 artifact 和最后失败原因。任务状态为 `queued`（待领取）、`in_progress`（处理中）、
+`failed`（本轮未找到可靠正文，下一轮可重试）、`archived`（正文已归档）和 `completed`（为后续抽取完成态预留）。
+
+接口为 `GET /api/policies/fallback-tasks`、受保护的
+`POST /api/policies/fallback-tasks/{id}/claim` 与
+`POST /api/policies/fallback-tasks/{id}/fail`。浏览器正文成功归档后，匹配同一 `sourceId + requestedUrl`
+的活动任务自动变为 `archived`。旧 009 迁移前只有失败 artifact 的来源，在首次重试时自动补建任务，保证历史数据也不再反复撞击官网。
+
+### 5.4 来源和城市状态
 
 来源保留 `error` 与最近失败 artifact，浏览器归档成功后恢复为 `active`。城市汇总新增或计算 `fallbackRequiredCount`，状态按优先级显示为：
 

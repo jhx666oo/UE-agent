@@ -147,6 +147,14 @@ class BrowserArtifactSubmit(BaseModel):
     fetchMode: Literal["workbuddy_browser"] = "workbuddy_browser"
 
 
+class FallbackTaskFailure(BaseModel):
+    """WorkBuddy 无法访问兜底来源时写回的可重试原因。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    reason: str = Field(min_length=1, max_length=2000)
+
+
 class ExtractionFact(BaseModel):
     """WorkBuddy 抽取出的单个字段值。quote 必填 —— 空引用不予采信。"""
 

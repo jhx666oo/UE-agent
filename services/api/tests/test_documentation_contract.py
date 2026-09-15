@@ -17,6 +17,7 @@ class DocumentationContractTests(unittest.TestCase):
             self.assertIn("pnpm bootstrap", document)
             self.assertIn("crawl-all", document)
             self.assertIn("research-runs", document)
+            self.assertIn("fallback-tasks", document)
 
         self.assertNotIn("当前版本支持全部城市总览、单城市/多城市对比、创建项目、编辑参数、保存场景、执行 24 个月测算、不可变结果快照，以及 Word/Excel/PDF 本地上传", readme)
         self.assertNotIn("默认读取 `/api/dashboard/overview`", readme)
@@ -38,6 +39,7 @@ class DocumentationContractTests(unittest.TestCase):
         self.assertIn("queued", skill)
         self.assertIn("browser-artifacts", skill)
         self.assertIn("browser_search", skill)
+        self.assertIn("不要反复请求", skill)
 
     def test_portable_workbuddy_automation_is_global_and_account_neutral(self):
         skill = (REPO_ROOT / ".workbuddy/skills/policy-ai-crawler/SKILL.md").read_text(encoding="utf-8")
@@ -53,6 +55,7 @@ class DocumentationContractTests(unittest.TestCase):
         self.assertIn("complete", skill)
         self.assertIn("workbuddy_browser", skill)
         self.assertIn("browser-artifacts", template)
+        self.assertIn("fallback-tasks", template)
         self.assertIn("FREQ=DAILY", template)
         self.assertIn("Asia/Shanghai", template)
         self.assertIn("policy-ai-crawler", template)

@@ -2,15 +2,16 @@
 
 > **For agentic workers:** Follow this plan task by task and keep the checkbox status updated as work progresses.
 
-**Goal:** 为普通 HTTP 抓取增加结构化浏览器兜底，让 WorkBuddy 能把被 WAF 拦截的官方正文回传并继续进入统一证据归档、字段校验和建议值流程。
+**Goal:** 为普通 HTTP 抓取增加结构化浏览器兜底，让 WorkBuddy 能把被 WAF、网络限制或大响应体拦截的官方正文回传并继续进入统一证据归档、字段校验和建议值流程；已进入队列的来源不再重复 HTTP。
 
-**Architecture:** 保留现有 `httpx` 抓取作为第一通道；API 对可兜底错误返回 `fallbackAction` 和错误分类，WorkBuddy Skill 自动使用浏览器或 AI 检索原文，再通过受保护的 `browser-artifacts` 接口回传。浏览器内容落为标准 crawl artifact，后续复用现有 extraction-submissions 校验链路；城市和来源状态从 artifact 与来源元数据派生，适配所有城市。
+**Architecture:** 保留现有 `httpx` 抓取作为第一通道；API 对可兜底错误返回 `fallbackAction` 和错误分类并生成幂等任务，WorkBuddy Skill 领取任务后使用浏览器或 AI 检索原文，再通过受保护的 `browser-artifacts` 接口回传。浏览器内容落为标准 crawl artifact，后续复用现有 extraction-submissions 校验链路；城市和来源状态从 artifact、任务与来源元数据派生，适配所有城市。
 
 **Tech Stack:** FastAPI、Pydantic、SQLite migration、现有 Json/SQLite Repository、WorkBuddy Markdown Skill、Next.js/React、TypeScript、Vitest、Python unittest。
 
 ## Global Constraints
 
 - 普通 HTTP 抓取优先，只有 JS/WAF、TLS/网络和超时等可恢复外站错误才触发浏览器兜底。
+- 响应超过来源 `maxBytes` 时转浏览器读取，不保存不完整的 HTTP 内容；同一来源同一 URL 的活动兜底任务抑制重复 HTTP。
 - 参数校验、SSRF、停用来源和空 URL 等安全或配置错误不得转交浏览器。
 - 浏览器正文必须带原始 URL、实际 URL、正文、抓取方式和逐字引用；搜索摘要不能作为唯一证据。
 - 浏览器回传只能创建 artifact 和灰色建议值，不得直接写正式测算输入。
@@ -295,3 +296,45 @@ Expected: backend, frontend, typecheck, lint, build and portable handoff checks 
 Run: `git diff --check && git status --short`
 
 Report the exact files changed, the deterministic fallback test result, and whether a live WorkBuddy browser run was executed. Do not claim live Chengdu recovery unless WorkBuddy actually returned and the API stored a browser artifact.
+
+### Task 6: Turn fallback failures into a retryable queue and prevent repeat requests
+
+**Files:**
+- Create: `services/api/migrations/sqlite/010_policy_fallback_tasks.sql`
+- Modify: `services/api/app/repository.py`
+- Modify: `services/api/app/sqlite_repository.py`
+- Modify: `services/api/app/crawlers/__init__.py`
+- Modify: `services/api/app/domain/policy/service.py`
+- Modify: `services/api/app/api/routes.py`
+- Modify: `services/api/app/api/schemas.py`
+- Modify: `.workbuddy/skills/policy-ai-crawler/SKILL.md`
+- Modify: `.workbuddy/automations/policy-ai-sync.template.json`
+- Modify: `apps/web/lib/policies.ts`
+- Modify: `apps/web/components/policy-city-detail.tsx`
+- Modify: `apps/web/app/(workspace)/policies/[cityId]/page.tsx`
+- Test: `services/api/tests/test_policy_fallback.py`
+
+- [x] **Step 1: Add failing regression tests**
+
+Cover oversized response classification, one task for repeated 412 failures, retry suppression, claim attempts,
+browser artifact auto-archival, and SQLite round-trip.
+
+- [x] **Step 2: Implement task persistence and lifecycle**
+
+Add JSON/SQLite repositories and the `GET`/`claim`/`fail` API. Existing 009-era failure artifacts backfill a task on
+the first retry, so historical blocked sources also stop being repeatedly requested.
+
+- [x] **Step 3: Integrate the queue into HTTP and browser paths**
+
+Classify oversized responses as `CONTENT_TOO_LARGE_BROWSER_FALLBACK`; create or reuse a task for all browser fallback
+errors; return `browser_required` for an active task; archive the matching task when browser text is persisted.
+
+- [x] **Step 4: Update UI and WorkBuddy automation**
+
+Show an actionable queue card and copyable task prompt, change batch wording to “批量请求已结束”, disable the
+per-source HTTP button while queued, and make the scheduled Skill process queued/failed tasks first.
+
+- [x] **Step 5: Run final verification after the queue patch**
+
+Run the API fallback test, all API tests, frontend tests, typecheck, lint, build, E2E and handoff checks. Do not claim
+completion until every command returns success; a live browser recovery is not part of local automated verification.

@@ -120,10 +120,17 @@ curl -s --noproxy '*' -X POST "$BASE/api/policies/fetch-requests" \
   -H 'Content-Type: application/json' \
   -d "{\"requests\":[{\"url\":\"http://127.0.0.1:${FIXTURE_PORT}/challenge\",\"cityId\":\"changsha\",\"sourceId\":\"$BLOCKED_SOURCE_ID\"}]}" \
   | "$PY" "$ASSERT" fallback-fetch
+FALLBACK_TASKS=$(curl -s --noproxy '*' "$BASE/api/policies/fallback-tasks?cityId=changsha")
+echo "$FALLBACK_TASKS" | "$PY" "$ASSERT" fallback-tasks
+FALLBACK_TASK_ID=$(echo "$FALLBACK_TASKS" | "$PY" -c "import sys,json;print(json.load(sys.stdin)['tasks'][0]['id'])")
+curl -s --noproxy '*' -X POST "$BASE/api/policies/fallback-tasks/$FALLBACK_TASK_ID/claim" \
+  | "$PY" "$ASSERT" fallback-task-claim
 BROWSER_ARTIFACT=$(curl -s --noproxy '*' -X POST "$BASE/api/policies/browser-artifacts" \
   -H 'Content-Type: application/json' \
   -d "{\"cityId\":\"changsha\",\"sourceId\":\"$BLOCKED_SOURCE_ID\",\"requestedUrl\":\"http://127.0.0.1:${FIXTURE_PORT}/challenge\",\"finalUrl\":\"http://127.0.0.1:${FIXTURE_PORT}/policy\",\"title\":\"长沙市长期护理保险实施办法（浏览器读取）\",\"content\":\"长沙市长期护理保险实施办法。基金支付比例为80%。\",\"contentType\":\"text/plain; charset=utf-8\",\"fetchMode\":\"workbuddy_browser\"}")
 echo "$BROWSER_ARTIFACT" | "$PY" "$ASSERT" browser-artifact
+curl -s --noproxy '*' "$BASE/api/policies/fallback-tasks?cityId=changsha" \
+  | "$PY" "$ASSERT" fallback-task-archived
 
 echo
 echo "==> 5. 回传抽取结果（含故意构造的非法条目，验证 7 项校验）"

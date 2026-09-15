@@ -37,6 +37,8 @@ WorkBuddy 账号，接手方需要在自己的账号中按模板创建一次；�
 当固定官网被 JS/WAF、超时或 TLS 拦截时，Skill 会自动切换 WorkBuddy 浏览器通道，
 把浏览器看到的官方正文通过 `/api/policies/browser-artifacts` 归档后再抽取；该流程对全部城市
 复用，不需要新增城市专门编写抓取代码。
+失败来源会进入 `/api/policies/fallback-tasks` 队列；队列未处理前系统不会重复请求同一 URL。
+响应体过大的 PDF/页面也会转入该队列，由 WorkBuddy 浏览器读取可见正文；若浏览器仍失败，任务会保留失败原因并在下一轮重试。
 
 ## 数据位置
 

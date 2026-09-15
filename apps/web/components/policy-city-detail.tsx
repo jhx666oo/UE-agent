@@ -2,7 +2,7 @@
 
 import React, { useState } from "react";
 import Link from "next/link";
-import { IconArrowLeft, IconBolt, IconDownload, IconExternalLink, IconPlayerPlay, IconPlus } from "@tabler/icons-react";
+import { IconArrowLeft, IconBolt, IconCheck, IconClipboard, IconDownload, IconExternalLink, IconPlayerPlay, IconPlus } from "@tabler/icons-react";
 import { Badge } from "@ue-agent/ui/components/badge";
 import { Button } from "@ue-agent/ui/components/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@ue-agent/ui/components/card";
@@ -17,6 +17,7 @@ import {
   type CrawlArtifact,
   type DataSource,
   type PolicyCityDetailResponse,
+  type PolicyFallbackTask,
   type SourceFreshnessReport,
 } from "@/lib/policies";
 
@@ -39,6 +40,7 @@ export function PolicyCityDetail({
   data,
   sources,
   artifacts,
+  fallbackTasks = [],
   onCreateSource,
   onToggleSource,
   onCrawl,
@@ -48,6 +50,7 @@ export function PolicyCityDetail({
   data: PolicyCityDetailResponse;
   sources: DataSource[];
   artifacts: CrawlArtifact[];
+  fallbackTasks?: PolicyFallbackTask[];
   onCreateSource?: (input: { name: string; url: string }) => Promise<void>;
   onToggleSource?: (source: DataSource) => Promise<void>;
   onCrawl?: (source: DataSource) => Promise<void>;
@@ -62,6 +65,7 @@ export function PolicyCityDetail({
   const [crawlingAll, setCrawlingAll] = useState(false);
   const [crawlAllSummary, setCrawlAllSummary] = useState<CrawlAllSummary | null>(null);
   const [historyExpanded, setHistoryExpanded] = useState(false);
+  const [copiedTaskId, setCopiedTaskId] = useState<string | null>(null);
 
   async function crawlAll() {
     if (!onCrawlAll) return;
@@ -88,6 +92,9 @@ export function PolicyCityDetail({
     ? orderedArtifacts
     : orderedArtifacts.slice(0, HISTORY_PREVIEW_LIMIT);
   const hiddenArtifactCount = orderedArtifacts.length - visibleArtifacts.length;
+  const openFallbackTasks = fallbackTasks.filter(
+    (task) => task.status !== "archived" && task.status !== "completed",
+  );
 
   /** 疑似过期 / 长期未变的来源在列表里挂一个警示徽标。 */
   function freshnessBadge(sourceId: string) {
@@ -120,6 +127,16 @@ export function PolicyCityDetail({
       await onCrawl(source);
     } finally {
       setCrawlingSourceId(null);
+    }
+  }
+
+  async function copyFallbackPrompt(task: PolicyFallbackTask) {
+    try {
+      await navigator.clipboard.writeText(task.taskPrompt);
+      setCopiedTaskId(task.id);
+      window.setTimeout(() => setCopiedTaskId((current) => (current === task.id ? null : current)), 1800);
+    } catch {
+      setCopiedTaskId(null);
     }
   }
 
@@ -174,7 +191,7 @@ export function PolicyCityDetail({
           {crawlAllSummary ? (
             <div className="space-y-2 rounded-md border border-border bg-surface-subtle p-3">
               <p className="text-sm">
-                全部抓取完成：成功 <span className="font-medium">{crawlAllSummary.succeeded}</span> · 失败{" "}
+                批量请求已结束：成功 <span className="font-medium">{crawlAllSummary.succeeded}</span> · 失败{" "}
                 <span className="font-medium">{crawlAllSummary.failed}</span>
                 {crawlAllSummary.skipped > 0 ? ` · 跳过 ${crawlAllSummary.skipped}` : ""} · 未变{" "}
                 <span className="font-medium">{crawlAllSummary.unchanged}</span> · 有更新{" "}
@@ -190,6 +207,11 @@ export function PolicyCityDetail({
                 共 {crawlAllSummary.total} 个来源，{formatPolicyDate(crawlAllSummary.crawledAt)}。
                 「有更新」的正文才值得再跑一轮 AI 抽取；「未变」的会直接跳过。
               </p>
+              {(crawlAllSummary.browserRequired ?? 0) > 0 ? (
+                <p className="text-xs text-warning">
+                  已有来源进入 WorkBuddy 兜底队列，后续点击不会重复请求被拦截的官网。
+                </p>
+              ) : null}
               {crawlAllSummary.results.some((item) => item.status !== "success") ? (
                 <ul className="space-y-1">
                   {crawlAllSummary.results
@@ -202,6 +224,42 @@ export function PolicyCityDetail({
                       </li>
                     ))}
                 </ul>
+              ) : null}
+            </div>
+          ) : null}
+          {openFallbackTasks.length > 0 ? (
+            <div className="space-y-3 rounded-md border border-warning/40 bg-warning-subtle p-4">
+              <div>
+                <p className="text-sm font-medium text-warning">
+                  WorkBuddy 浏览器兜底队列 · {openFallbackTasks.length} 个
+                </p>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  这些来源已停止重复 HTTP 请求。定时 Skill 会领取任务、打开原链接或检索官方镜像，回传正文后自动关闭任务。
+                </p>
+              </div>
+              <div className="space-y-2">
+                {openFallbackTasks.slice(0, 8).map((task) => (
+                  <div key={task.id} className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-warning/30 bg-background/70 p-3">
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <p className="truncate text-sm font-medium">{task.sourceName ?? task.sourceId}</p>
+                        <Badge variant={task.status === "failed" ? "danger" : "warning"}>
+                          {task.status === "in_progress" ? "处理中" : task.status === "failed" ? "待重试" : "待浏览器处理"}
+                        </Badge>
+                        {task.httpStatus ? <span className="text-xs text-muted-foreground">HTTP {task.httpStatus}</span> : null}
+                      </div>
+                      <p className="mt-1 truncate text-xs text-muted-foreground">{task.requestedUrl}</p>
+                      {task.lastError ? <p className="mt-1 text-xs text-danger">{task.lastError}</p> : null}
+                    </div>
+                    <Button size="sm" variant="outline" onClick={() => void copyFallbackPrompt(task)}>
+                      {copiedTaskId === task.id ? <IconCheck size={15} stroke={1.75} /> : <IconClipboard size={15} stroke={1.75} />}
+                      {copiedTaskId === task.id ? "已复制" : "复制处理指令"}
+                    </Button>
+                  </div>
+                ))}
+              </div>
+              {openFallbackTasks.length > 8 ? (
+                <p className="text-xs text-muted-foreground">还有 {openFallbackTasks.length - 8} 个任务，请由 WorkBuddy Skill 批量处理。</p>
               ) : null}
             </div>
           ) : null}
@@ -271,10 +329,10 @@ export function PolicyCityDetail({
                       <Button
                         size="sm"
                         onClick={() => void crawl(source)}
-                        disabled={!onCrawl || source.status === "paused" || crawlingSourceId === source.id}
+                        disabled={!onCrawl || source.status === "paused" || crawlingSourceId === source.id || source.fallbackAction === "browser_search"}
                       >
                         <IconPlayerPlay size={15} stroke={1.75} />
-                        {crawlingSourceId === source.id ? "抓取中…" : "立即抓取"}
+                        {crawlingSourceId === source.id ? "抓取中…" : source.fallbackAction === "browser_search" ? "已进入兜底队列" : "立即抓取"}
                       </Button>
                     </div>
                   </div>

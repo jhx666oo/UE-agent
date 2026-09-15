@@ -131,6 +131,29 @@ curl -s --noproxy '*' -X POST "$BASE_URL/api/policies/extraction-submissions" \
 
 ## 执行流程（固定来源兼容六步）
 
+### Step 0 · 先处理浏览器兜底队列，避免重复撞击官网
+
+每次运行开始，以及普通 `fetch-requests` 返回后，都先读取：
+
+```bash
+curl -s --noproxy '*' "$BASE_URL/api/policies/fallback-tasks" -o /tmp/policy-fallback-tasks.json
+```
+
+只处理 `status` 为 `queued` 或 `failed` 的任务；`in_progress` 表示上一次运行仍在处理，
+不得重复领取，`archived`/`completed` 表示浏览器正文已经归档。对每个待处理任务：
+
+1. 调用 `POST /api/policies/fallback-tasks/{id}/claim`（带 Agent Token），领取成功后再打开原链接。
+2. 原链接遇到 JS/WAF、证书或跳转问题时，用任务中的城市、来源和当前年份检索官方文章/政府栏目/PDF；
+   不把搜索摘要当正文，也不把第三方转载当最终证据。
+3. 找到官方正文后，按“HTTP 抓取失败时：浏览器通道兜底”一节调用
+   `POST /api/policies/browser-artifacts`。该接口成功后会自动把任务置为 `archived`；同一正文重复回传是幂等的。
+4. 如果浏览器也无法访问或找不到官方正文，调用
+   `POST /api/policies/fallback-tasks/{id}/fail`，写明失败原因。下一次定时运行仍会重新领取，
+   但不得在同一轮无限重试同一个 URL。
+
+任务里的 `taskPrompt` 是可直接交给 WorkBuddy 的人类可读指令。该队列适用于现有城市和未来新增城市，
+不需要为城市增加代码或创建新的 Skill/定时任务。
+
 ### Step 1 · 拉取派活清单
 
 ```bash
@@ -173,9 +196,11 @@ curl -s -X POST "$BASE_URL/api/policies/fetch-requests" \
 
 ### HTTP 抓取失败时：浏览器通道兜底（所有城市统一适用）
 
-`fetch-requests` 仍然是第一入口。若某条结果是 `status: failed` 且
-`fallbackAction: "browser_search"`，说明 API 的纯 HTTP 通道遇到了 JS 挑战型 WAF、
-HTTP 拦截、超时或网络/TLS 限制。**不要反复请求同一个 URL，也不要用搜索摘要代替原文。**
+`fetch-requests` 仍然是普通来源的第一入口。若某条结果是 `status: failed` 且
+`fallbackAction: "browser_search"`，API 会同时生成或复用一个浏览器兜底任务；如果该来源已有
+`queued`/`in_progress` 任务，后续重复请求会直接返回 `status: browser_required`，不会再次触网。
+这通常表示纯 HTTP 通道遇到了 JS 挑战型 WAF、HTTP 拦截、超时、网络/TLS 限制或响应体过大。
+**不要反复请求同一个 URL，也不要用搜索摘要代替原文。**
 
 此时按下面顺序处理：
 

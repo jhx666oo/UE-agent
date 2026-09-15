@@ -31,6 +31,7 @@ def empty_store_payload() -> dict[str, Any]:
         "fieldValues": [],
         "fieldValueHistory": [],
         "crawlArtifacts": [],
+        "policyFallbackTasks": [],
         "onboardingJobs": [],
         "policyResearchRuns": [],
         "policyResearchQueries": [],
@@ -48,6 +49,7 @@ def normalize_store_payload(payload: Any) -> dict[str, Any]:
         "fieldValues",
         "fieldValueHistory",
         "crawlArtifacts",
+        "policyFallbackTasks",
         "onboardingJobs",
         "policyResearchRuns",
         "policyResearchQueries",
@@ -178,6 +180,23 @@ class ProjectRepository(Protocol):
     def get_crawl_artifact(self, artifact_id: str) -> dict[str, Any]: ...
 
     def create_crawl_artifact(self, data: Mapping[str, Any]) -> dict[str, Any]: ...
+
+    # ---------- 浏览器兜底任务 ----------
+    def list_policy_fallback_tasks(
+        self, *, city_id: str | None = None, status: str | None = None
+    ) -> list[dict[str, Any]]: ...
+
+    def get_policy_fallback_task(self, task_id: str) -> dict[str, Any]: ...
+
+    def get_active_policy_fallback_task(
+        self, *, source_id: str, requested_url: str
+    ) -> dict[str, Any] | None: ...
+
+    def create_policy_fallback_task(self, data: Mapping[str, Any]) -> dict[str, Any]: ...
+
+    def update_policy_fallback_task(
+        self, task_id: str, data: Mapping[str, Any]
+    ) -> dict[str, Any]: ...
 
     # ---------- AI 回传链路（WorkBuddy 驱动） ----------
     def list_candidate_sources(
@@ -1057,6 +1076,86 @@ class JsonProjectRepository:
         payload.setdefault("crawlArtifacts", []).append(artifact)
         self._write(payload)
         return copy.deepcopy(artifact)
+
+    # ---------- 浏览器兜底任务 ----------
+
+    def list_policy_fallback_tasks(
+        self, *, city_id: str | None = None, status: str | None = None
+    ) -> list[dict[str, Any]]:
+        tasks = [
+            copy.deepcopy(task)
+            for task in self._read().get("policyFallbackTasks", [])
+            if (city_id is None or task.get("cityId") == city_id)
+            and (status is None or task.get("status") == status)
+        ]
+        return sorted(tasks, key=lambda task: str(task.get("updatedAt") or ""), reverse=True)
+
+    def get_policy_fallback_task(self, task_id: str) -> dict[str, Any]:
+        for task in self._read().get("policyFallbackTasks", []):
+            if task.get("id") == task_id:
+                return copy.deepcopy(task)
+        raise KeyError(task_id)
+
+    def get_active_policy_fallback_task(
+        self, *, source_id: str, requested_url: str
+    ) -> dict[str, Any] | None:
+        tasks = self.list_policy_fallback_tasks()
+        return next(
+            (
+                task
+                for task in tasks
+                if task.get("sourceId") == source_id
+                and task.get("requestedUrl") == requested_url
+                and task.get("status") in {"queued", "in_progress"}
+            ),
+            None,
+        )
+
+    def create_policy_fallback_task(self, data: Mapping[str, Any]) -> dict[str, Any]:
+        now = utc_now()
+        task = {
+            "id": str(data.get("id") or new_id("fallback-task")),
+            "cityId": str(data["cityId"]),
+            "sourceId": str(data["sourceId"]),
+            "researchRunId": data.get("researchRunId"),
+            "requestedUrl": str(data["requestedUrl"]),
+            "sourceName": data.get("sourceName"),
+            "status": str(data.get("status") or "queued"),
+            "httpStatus": data.get("httpStatus"),
+            "errorCode": data.get("errorCode"),
+            "fallbackAction": str(data.get("fallbackAction") or "browser_search"),
+            "fallbackReason": data.get("fallbackReason"),
+            "attempts": int(data.get("attempts") or 0),
+            "artifactId": data.get("artifactId"),
+            "lastError": data.get("lastError"),
+            "createdAt": data.get("createdAt") or now,
+            "updatedAt": data.get("updatedAt") or now,
+        }
+        payload = self._read()
+        payload.setdefault("policyFallbackTasks", []).append(task)
+        self._write(payload)
+        return copy.deepcopy(task)
+
+    def update_policy_fallback_task(
+        self, task_id: str, data: Mapping[str, Any]
+    ) -> dict[str, Any]:
+        payload = self._read()
+        task = next(
+            (item for item in payload.get("policyFallbackTasks", []) if item.get("id") == task_id),
+            None,
+        )
+        if task is None:
+            raise KeyError(task_id)
+        allowed = {
+            "researchRunId", "requestedUrl", "sourceName", "status", "httpStatus", "errorCode",
+            "fallbackAction", "fallbackReason", "attempts", "artifactId", "lastError",
+        }
+        for key in allowed:
+            if key in data:
+                task[key] = copy.deepcopy(data[key])
+        task["updatedAt"] = utc_now()
+        self._write(payload)
+        return copy.deepcopy(task)
 
     # ---------- AI 回传链路（WorkBuddy 驱动） ----------
 

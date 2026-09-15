@@ -445,11 +445,59 @@ export type CrawlAllSummary = {
   results: CrawlAllItem[];
 };
 
+export type PolicyFallbackTaskStatus = "queued" | "in_progress" | "failed" | "archived" | "completed";
+
+export type PolicyFallbackTask = {
+  id: string;
+  cityId: string;
+  cityName: string | null;
+  sourceId: string;
+  sourceName: string | null;
+  requestedUrl: string;
+  status: PolicyFallbackTaskStatus;
+  httpStatus: number | null;
+  errorCode: string | null;
+  fallbackAction: string;
+  fallbackReason: string | null;
+  attempts: number;
+  artifactId: string | null;
+  lastError: string | null;
+  taskPrompt: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export function listPolicyFallbackTasks(cityId?: string, status?: PolicyFallbackTaskStatus) {
+  const params = new URLSearchParams();
+  if (cityId) params.set("cityId", cityId);
+  if (status) params.set("status", status);
+  const query = params.toString();
+  return apiFetch<{ tasks: PolicyFallbackTask[] }>(
+    `/api/policies/fallback-tasks${query ? `?${query}` : ""}`,
+  );
+}
+
 /** 一键抓取该城市所有「启用」来源（顺序执行，单条失败不中断整批）。 */
 export function crawlAllPolicySources(cityId: string) {
   return apiFetch<CrawlAllSummary>(`/api/policies/cities/${encodeURIComponent(cityId)}/crawl-all`, {
     method: "POST",
   });
+}
+
+/** WorkBuddy 领取浏览器兜底任务；重复领取进行中的任务是幂等的。 */
+export function claimPolicyFallbackTask(taskId: string) {
+  return apiFetch<{ task: PolicyFallbackTask }>(
+    `/api/policies/fallback-tasks/${encodeURIComponent(taskId)}/claim`,
+    { method: "POST" },
+  );
+}
+
+/** WorkBuddy 无法找到官方正文时写回失败原因。 */
+export function failPolicyFallbackTask(taskId: string, reason: string) {
+  return apiFetch<{ task: PolicyFallbackTask }>(
+    `/api/policies/fallback-tasks/${encodeURIComponent(taskId)}/fail`,
+    { method: "POST", body: JSON.stringify({ reason }) },
+  );
 }
 
 export type BrowserArtifactInput = {

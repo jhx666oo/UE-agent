@@ -11,6 +11,7 @@
 - `.workbuddy/skills/policy-city-onboarding/`：新增城市自动发现来源 Skill；
 - `.workbuddy/automations/policy-ai-sync.template.json`：全城市每日同步模板；
 - WorkBuddy HTTP 失败后的浏览器兜底协议：`/api/policies/browser-artifacts`；
+- WorkBuddy 浏览器兜底任务队列：`/api/policies/fallback-tasks`，以及 010 SQLite 迁移；
 - `HANDOFF.md`：解压后的启动说明。
 
 交付包不会包含 `.env.local`、Vercel OIDC token、依赖目录、构建缓存、`.git` 或 WorkBuddy 私有 memory。令牌只能由接手方在本地环境配置，不能写入仓库或任务模板。
@@ -63,6 +64,8 @@ bash scripts/dev-all.sh
 WorkBuddy 的账号级定时任务记录不能随 Git 复制，接手方必须在自己的 WorkBuddy 账号中完成这一次创建。Skill 文件、定时任务内容、API 地址约定和所有政策数据规则已经在交付包中。
 其中固定 URL 遇到 JS/WAF、超时或 TLS 失败时，`policy-ai-crawler` 会按统一协议切换浏览器读取，
 回传正文并归档为 `workbuddy_browser` artifact；新增城市不需要增加代码或单独定时任务。
+大 PDF/大页面响应超过 HTTP 通道上限时也会进入同一队列；任务未归档前不会重复请求同一来源，
+因此交接方只需启动本地 API，并在自己的 WorkBuddy 中按模板启用一次全城市定时任务。
 
 ## 本地 API 与 WorkBuddy 网络边界
 

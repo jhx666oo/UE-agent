@@ -3,7 +3,7 @@ import React from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { PolicyCityDetail } from "./policy-city-detail";
 import { PolicyOverview } from "./policy-overview";
-import type { CrawlArtifact, PolicyCityDetailResponse, PolicyOverviewResponse } from "@/lib/policies";
+import type { CrawlArtifact, PolicyCityDetailResponse, PolicyFallbackTask, PolicyOverviewResponse } from "@/lib/policies";
 
 const overview: PolicyOverviewResponse = {
   cities: [
@@ -98,6 +98,26 @@ const artifacts: CrawlArtifact[] = [
   },
 ];
 
+const fallbackTask: PolicyFallbackTask = {
+  id: "fallback-task-1",
+  cityId: "changsha",
+  cityName: "长沙",
+  sourceId: "source-1",
+  sourceName: "长沙医保局",
+  requestedUrl: "https://example.test/policy",
+  status: "queued",
+  httpStatus: 412,
+  errorCode: "HTTP_412_BROWSER_REQUIRED",
+  fallbackAction: "browser_search",
+  fallbackReason: "js_challenge",
+  attempts: 0,
+  artifactId: null,
+  lastError: "官网返回 HTTP 412，未保存内容",
+  taskPrompt: "请使用 WorkBuddy 浏览器处理 UE-Agent 政策兜底任务",
+  createdAt: "2026-09-09T00:00:00Z",
+  updatedAt: "2026-09-09T00:00:00Z",
+};
+
 afterEach(() => cleanup());
 
 describe("policy center", () => {
@@ -165,6 +185,21 @@ describe("policy center", () => {
         "建议值以灰色提示展示在城市测算页，点击「采用建议值」后才写入参数；手工填写会标记为已覆盖并保留建议值来源。",
       ),
     ).toBeInTheDocument();
+  });
+
+  it("shows an actionable browser fallback queue", () => {
+    render(
+      <PolicyCityDetail
+        data={detail}
+        sources={detail.dataSources}
+        artifacts={[]}
+        fallbackTasks={[fallbackTask]}
+      />,
+    );
+
+    expect(screen.getByText("WorkBuddy 浏览器兜底队列 · 1 个")).toBeInTheDocument();
+    expect(screen.getByText("待浏览器处理")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "复制处理指令" })).toBeInTheDocument();
   });
 
   it("exposes policy exports from the city page", () => {

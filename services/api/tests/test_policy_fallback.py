@@ -28,6 +28,14 @@ class _FallbackHandler(http.server.BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(body)
             return
+        if self.path == "/large":
+            body = b"x" * 32
+            self.send_response(200)
+            self.send_header("Content-Type", "application/pdf")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
         self.send_response(404)
         self.send_header("Content-Length", "0")
         self.end_headers()
@@ -70,6 +78,20 @@ class BrowserFallbackCrawlerTests(unittest.TestCase):
             crawl_source("http://127.0.0.1/policy", self.raw_dir)
 
         self.assertIsNone(context.exception.fallback_action)
+
+    def test_oversized_response_is_routed_to_browser_fallback(self):
+        with self.assertRaises(CrawlError) as context:
+            crawl_source(
+                f"http://{self.host}:{self.port}/large",
+                self.raw_dir,
+                max_bytes=1,
+                allow_private=True,
+            )
+
+        error = context.exception
+        self.assertEqual(error.error_code, "CONTENT_TOO_LARGE_BROWSER_FALLBACK")
+        self.assertEqual(error.fallback_action, "browser_search")
+        self.assertEqual(error.fallback_reason, "content_too_large")
 
 
 class BrowserFallbackApiTests(unittest.TestCase):
@@ -137,6 +159,87 @@ class BrowserFallbackApiTests(unittest.TestCase):
         source = self.client.get("/api/policies/sources").json()[0]
         self.assertEqual(source["fallbackAction"], "browser_search")
 
+    def test_repeated_failure_creates_one_browser_task_and_skips_http_retry(self):
+        headers = {"x-ue-agent-token": "test-token"}
+        payload = {
+            "requests": [
+                {
+                    "url": self.source["url"],
+                    "cityId": "成都",
+                    "sourceId": self.source["id"],
+                    "name": self.source["name"],
+                }
+            ]
+        }
+        first = self.client.post("/api/policies/fetch-requests", headers=headers, json=payload)
+        second = self.client.post("/api/policies/fetch-requests", headers=headers, json=payload)
+
+        self.assertEqual(first.status_code, 200, first.text)
+        self.assertEqual(second.status_code, 200, second.text)
+        self.assertEqual(first.json()["results"][0]["status"], "failed")
+        second_item = second.json()["results"][0]
+        self.assertEqual(second_item["status"], "browser_required")
+        self.assertTrue(second_item["fallbackTaskId"])
+        self.assertEqual(second.json()["browserRequired"], 1)
+        self.assertEqual(len(self.repository.list_crawl_artifacts(source_id=self.source["id"])), 1)
+
+        tasks = self.client.get("/api/policies/fallback-tasks?cityId=成都")
+        self.assertEqual(tasks.status_code, 200, tasks.text)
+        task = tasks.json()["tasks"][0]
+        self.assertEqual(task["status"], "queued")
+        self.assertIn("WorkBuddy", task["taskPrompt"])
+
+        claimed = self.client.post(f"/api/policies/fallback-tasks/{task['id']}/claim", headers=headers)
+        self.assertEqual(claimed.status_code, 200, claimed.text)
+        self.assertEqual(claimed.json()["task"]["status"], "in_progress")
+        self.assertEqual(claimed.json()["task"]["attempts"], 1)
+
+        archived = self.client.post(
+            "/api/policies/browser-artifacts",
+            headers=headers,
+            json=self._browser_payload(),
+        )
+        self.assertEqual(archived.status_code, 200, archived.text)
+        task_after = self.client.get("/api/policies/fallback-tasks?cityId=成都").json()["tasks"][0]
+        self.assertEqual(task_after["status"], "archived")
+        self.assertEqual(task_after["artifactId"], archived.json()["artifact"]["artifactId"])
+
+        next_attempt = self.client.post("/api/policies/fetch-requests", headers=headers, json=payload)
+        self.assertEqual(next_attempt.status_code, 200, next_attempt.text)
+        self.assertEqual(next_attempt.json()["results"][0]["status"], "failed")
+        self.assertEqual(len(self.client.get("/api/policies/fallback-tasks?cityId=成都").json()["tasks"]), 2)
+
+    def test_crawl_all_separates_browser_queue_from_actual_failures(self):
+        response = self.client.post("/api/policies/cities/成都/crawl-all")
+
+        self.assertEqual(response.status_code, 200, response.text)
+        body = response.json()
+        self.assertEqual(body["succeeded"], 0)
+        self.assertEqual(body["failed"], 0)
+        self.assertEqual(body["browserRequired"], 1)
+        self.assertEqual(body["results"][0]["status"], "browser_required")
+
+    def test_listing_queue_backfills_legacy_browser_failures(self):
+        self.repository.create_crawl_artifact(
+            {
+                "sourceId": self.source["id"],
+                "cityId": "成都",
+                "requestedUrl": self.source["url"],
+                "status": "failed",
+                "errorMessage": "官网返回 HTTP 412，未保存内容",
+                "httpStatus": 412,
+                "fetchMode": "http",
+            }
+        )
+
+        response = self.client.get("/api/policies/fallback-tasks?cityId=成都")
+
+        self.assertEqual(response.status_code, 200, response.text)
+        tasks = response.json()["tasks"]
+        self.assertEqual(len(tasks), 1)
+        self.assertEqual(tasks[0]["status"], "queued")
+        self.assertEqual(tasks[0]["fallbackReason"], "js_challenge")
+
     def test_browser_artifact_is_saved_and_idempotent(self):
         headers = {"x-ue-agent-token": "test-token"}
         first = self.client.post(
@@ -180,8 +283,8 @@ class BrowserFallbackApiTests(unittest.TestCase):
 class BrowserFallbackSqliteApiTests(unittest.TestCase):
     def setUp(self):
         self.temp_dir = tempfile.TemporaryDirectory()
-        repository = SqliteProjectRepository(Path(self.temp_dir.name) / "ue-agent.sqlite3")
-        self.source = repository.create_data_source(
+        self.repository = SqliteProjectRepository(Path(self.temp_dir.name) / "ue-agent.sqlite3")
+        self.source = self.repository.create_data_source(
             {
                 "cityId": "成都",
                 "name": "成都医保局",
@@ -190,7 +293,7 @@ class BrowserFallbackSqliteApiTests(unittest.TestCase):
         )
         self.previous_token = os.environ.get("UE_AGENT_AGENT_TOKEN")
         os.environ["UE_AGENT_AGENT_TOKEN"] = "test-token"
-        self.client = TestClient(create_app(repository))
+        self.client = TestClient(create_app(self.repository))
 
     def tearDown(self):
         if self.previous_token is None:
@@ -200,6 +303,18 @@ class BrowserFallbackSqliteApiTests(unittest.TestCase):
         self.temp_dir.cleanup()
 
     def test_browser_artifact_round_trips_through_sqlite(self):
+        task = self.repository.create_policy_fallback_task(
+            {
+                "cityId": "成都",
+                "sourceId": self.source["id"],
+                "requestedUrl": self.source["url"],
+                "sourceName": "成都医保局",
+                "httpStatus": 412,
+                "errorCode": "HTTP_412_BROWSER_REQUIRED",
+                "fallbackAction": "browser_search",
+                "fallbackReason": "js_challenge",
+            }
+        )
         response = self.client.post(
             "/api/policies/browser-artifacts",
             headers={"x-ue-agent-token": "test-token"},
@@ -221,6 +336,10 @@ class BrowserFallbackSqliteApiTests(unittest.TestCase):
         source = self.client.get("/api/policies/sources").json()[0]
         self.assertEqual(source["lastFetchMode"], "workbuddy_browser")
         self.assertIsNone(source["fallbackAction"])
+        persisted_task = self.client.get("/api/policies/fallback-tasks?cityId=成都").json()["tasks"][0]
+        self.assertEqual(persisted_task["id"], task["id"])
+        self.assertEqual(persisted_task["status"], "archived")
+        self.assertEqual(persisted_task["artifactId"], artifact["artifactId"])
 
 
 if __name__ == "__main__":

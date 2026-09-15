@@ -57,7 +57,24 @@ def step_fallback_fetch(data: dict) -> None:
     assert item["httpStatus"] == 412, item
     assert item["errorCode"] == "HTTP_412_BROWSER_REQUIRED", item
     assert item["fallbackAction"] == "browser_search", item
-    print(f"   HTTP {item['httpStatus']} 已转为 WorkBuddy 兜底：{item['fallbackReason']}")
+    assert item.get("fallbackTaskId"), item
+    print(f"   HTTP {item['httpStatus']} 已转为 WorkBuddy 兜底任务：{item['fallbackTaskId']}（{item['fallbackReason']}）")
+
+
+def step_fallback_tasks(data: dict) -> None:
+    tasks = data.get("tasks") or []
+    assert tasks, data
+    task = tasks[0]
+    assert task["status"] in {"queued", "in_progress"}, task
+    assert task.get("taskPrompt") and "WorkBuddy" in task["taskPrompt"], task
+    print(f"   兜底队列：{len(tasks)} 个；首个任务 {task['id']} [{task['status']}]")
+
+
+def step_fallback_task_claim(data: dict) -> None:
+    task = data["task"]
+    assert task["status"] == "in_progress", task
+    assert task["attempts"] >= 1, task
+    print(f"   已领取浏览器兜底任务：{task['id']}（第 {task['attempts']} 次）")
 
 
 def step_browser_artifact(data: dict) -> None:
@@ -65,7 +82,15 @@ def step_browser_artifact(data: dict) -> None:
     assert artifact["status"] == "success", artifact
     assert artifact["fetchMode"] == "workbuddy_browser", artifact
     assert artifact.get("storedPath"), artifact
+    assert data.get("fallbackTaskId"), data
     print(f"   浏览器正文已归档：{artifact['artifactId']}；指纹 {(artifact.get('sha256') or '')[:16]}…")
+
+
+def step_fallback_task_archived(data: dict) -> None:
+    tasks = data.get("tasks") or []
+    assert tasks and tasks[0]["status"] == "archived", data
+    assert tasks[0].get("artifactId"), data
+    print(f"   兜底任务已自动归档：{tasks[0]['id']} → {tasks[0]['artifactId']}")
 
 
 def step_crawl_all(data: dict) -> None:
@@ -227,7 +252,10 @@ STEPS = {
     "targets": step_targets,
     "fetch": step_fetch,
     "fallback-fetch": step_fallback_fetch,
+    "fallback-tasks": step_fallback_tasks,
+    "fallback-task-claim": step_fallback_task_claim,
     "browser-artifact": step_browser_artifact,
+    "fallback-task-archived": step_fallback_task_archived,
     "crawl-all": step_crawl_all,
     "onboarding": step_onboarding,
     "artifacts": step_artifacts,

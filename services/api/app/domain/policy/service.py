@@ -13,6 +13,7 @@ from ...repository import LocalPolicyFileStore, ProjectRepository, new_id, utc_n
 
 ALLOWED_EXTENSIONS = {".doc", ".docx", ".xls", ".xlsx", ".pdf"}
 MAX_UPLOAD_BYTES = 20 * 1024 * 1024
+FALLBACK_TASK_ACTIVE_STATUSES = {"queued", "in_progress"}
 
 
 class CrawlServiceError(Exception):
@@ -182,20 +183,234 @@ class PolicyService:
         # 生产保持 False：拒绝本机/私有地址。测试注入 True 以便用本地 HTTP 服务验证行为。
         self.crawl_allow_private = False
 
+    def _source(self, source_id: str) -> dict[str, Any]:
+        try:
+            return next(
+                source
+                for source in self.repository.list_data_sources()
+                if str(source.get("id")) == str(source_id)
+            )
+        except StopIteration:
+            raise CrawlServiceError("NOT_FOUND", f"Data source not found: {source_id}", 404) from None
+
+    @staticmethod
+    def _fallback_task_prompt(
+        source: Mapping[str, Any], requested_url: str, details: Mapping[str, Any]
+    ) -> str:
+        reason = str(details.get("fallbackReason") or "官网 HTTP 通道不可用")
+        error_code = str(details.get("errorCode") or "POLICY_SOURCE_FETCH_FAILED")
+        return (
+            "请使用 WorkBuddy 浏览器处理 UE-Agent 政策兜底任务："
+            f"城市={source.get('cityId') or '未知'}；来源={source.get('name') or source.get('id')}; "
+            f"原链接={requested_url}；原因={reason}；错误码={error_code}。"
+            "先打开原链接；若被拦截或跳转失败，再检索同一城市的官方发布页/官方 PDF。"
+            "确认正文来自官方来源后，将可复核正文、最终 URL、标题回传 /api/policies/browser-artifacts；"
+            "回传后再按字段目录提交抽取结果。禁止凭空补数字，找不到官方正文时回写失败原因。"
+        )
+
+    def _ensure_browser_fallback_task(
+        self,
+        source: Mapping[str, Any],
+        *,
+        requested_url: str,
+        details: Mapping[str, Any],
+        research_run_id: str | None = None,
+    ) -> dict[str, Any]:
+        source_id = str(source.get("id") or "")
+        existing = self.repository.get_active_policy_fallback_task(
+            source_id=source_id,
+            requested_url=requested_url,
+        )
+        task_data = {
+            "cityId": source.get("cityId"),
+            "sourceId": source_id,
+            "researchRunId": research_run_id,
+            "requestedUrl": requested_url,
+            "sourceName": source.get("name"),
+            "status": "queued",
+            "httpStatus": details.get("httpStatus"),
+            "errorCode": details.get("errorCode"),
+            "fallbackAction": details.get("fallbackAction") or "browser_search",
+            "fallbackReason": details.get("fallbackReason"),
+            "lastError": details.get("message"),
+        }
+        if existing is not None:
+            return self.repository.update_policy_fallback_task(
+                existing["id"],
+                {
+                    **task_data,
+                    "status": existing.get("status") or "queued",
+                    "attempts": existing.get("attempts") or 0,
+                },
+            )
+        return self.repository.create_policy_fallback_task(task_data)
+
+    def _pending_browser_fallback_task(
+        self, source: Mapping[str, Any], requested_url: str
+    ) -> dict[str, Any] | None:
+        source_id = str(source.get("id") or "")
+        active = self.repository.get_active_policy_fallback_task(
+            source_id=source_id,
+            requested_url=requested_url,
+        )
+        if active is not None:
+            return active
+
+        # 009 迁移前的失败记录没有任务表。第一次重试时从兼容元数据补建任务，
+        # 同时确保 URL 被改过后不会把旧链接的失败状态误套到新链接上。
+        artifacts = self.repository.list_crawl_artifacts(source_id=source_id)
+        latest_failed = next(reversed(artifacts), None) if artifacts else None
+        if not (
+            latest_failed
+            and latest_failed.get("status") == "failed"
+            and latest_failed.get("requestedUrl") == requested_url
+            and latest_failed.get("fallbackAction") == "browser_search"
+        ):
+            latest_failed = None
+        if latest_failed is None:
+            return None
+        details = {
+            "httpStatus": latest_failed.get("httpStatus"),
+            "errorCode": latest_failed.get("errorCode"),
+            "fallbackAction": latest_failed.get("fallbackAction"),
+            "fallbackReason": latest_failed.get("fallbackReason"),
+            "message": latest_failed.get("errorMessage"),
+        }
+        return self._ensure_browser_fallback_task(
+            source,
+            requested_url=requested_url,
+            details=details,
+        )
+
+    @staticmethod
+    def _browser_required_error(task: Mapping[str, Any]) -> CrawlServiceError:
+        details = {
+            "httpStatus": task.get("httpStatus"),
+            "errorCode": task.get("errorCode") or "POLICY_SOURCE_BROWSER_REQUIRED",
+            "fallbackAction": task.get("fallbackAction") or "browser_search",
+            "fallbackReason": task.get("fallbackReason"),
+            "fallbackTaskId": task.get("id"),
+        }
+        return CrawlServiceError(
+            "POLICY_SOURCE_BROWSER_REQUIRED",
+            "该来源已进入 WorkBuddy 浏览器兜底队列，系统不会重复 HTTP 抓取",
+            409,
+            details,
+        )
+
+    def list_browser_fallback_tasks(
+        self, *, city_id: str | None = None, status: str | None = None
+    ) -> list[dict[str, Any]]:
+        self._backfill_legacy_fallback_tasks(city_id=city_id)
+        projects = {str(project.get("cityId")): project for project in self.repository.list_projects()}
+        sources = {str(source.get("id")): source for source in self.repository.list_data_sources()}
+        result: list[dict[str, Any]] = []
+        for task in self.repository.list_policy_fallback_tasks(city_id=city_id, status=status):
+            source = sources.get(str(task.get("sourceId")), {})
+            item = dict(task)
+            item["cityName"] = projects.get(str(task.get("cityId")), {}).get("city") or task.get("cityId")
+            item["sourceName"] = task.get("sourceName") or source.get("name")
+            item["taskPrompt"] = self._fallback_task_prompt(
+                {**source, **item}, str(task.get("requestedUrl") or ""), task
+            )
+            result.append(item)
+        return result
+
+    def _backfill_legacy_fallback_tasks(self, *, city_id: str | None = None) -> None:
+        """把 010 迁移前已经存在的失败 artifact 转成一次性队列任务。"""
+        known_keys = {
+            (str(task.get("sourceId")), str(task.get("requestedUrl")))
+            for task in self.repository.list_policy_fallback_tasks(city_id=city_id)
+        }
+        for source in self.repository.list_data_sources(city_id=city_id):
+            source_id = str(source.get("id") or "")
+            requested_url = str(source.get("url") or "").strip()
+            if not source_id or not requested_url or (source_id, requested_url) in known_keys:
+                continue
+            artifacts = self.repository.list_crawl_artifacts(source_id=source_id)
+            latest_failed = next(reversed(artifacts), None) if artifacts else None
+            if not (
+                latest_failed
+                and latest_failed.get("status") == "failed"
+                and latest_failed.get("requestedUrl") == requested_url
+                and latest_failed.get("fallbackAction") == "browser_search"
+            ):
+                latest_failed = None
+            if latest_failed is None:
+                continue
+            self._ensure_browser_fallback_task(
+                source,
+                requested_url=requested_url,
+                details={
+                    "httpStatus": latest_failed.get("httpStatus"),
+                    "errorCode": latest_failed.get("errorCode"),
+                    "fallbackAction": latest_failed.get("fallbackAction"),
+                    "fallbackReason": latest_failed.get("fallbackReason"),
+                    "message": latest_failed.get("errorMessage"),
+                },
+            )
+            known_keys.add((source_id, requested_url))
+
+    def claim_browser_fallback_task(self, task_id: str) -> dict[str, Any]:
+        try:
+            task = self.repository.get_policy_fallback_task(task_id)
+        except KeyError:
+            raise CrawlServiceError("NOT_FOUND", f"Fallback task not found: {task_id}", 404) from None
+        status = str(task.get("status") or "queued")
+        if status == "in_progress":
+            return task
+        if status in {"archived", "completed"}:
+            return task
+        if status not in {"queued", "failed"}:
+            raise CrawlServiceError("FALLBACK_TASK_INVALID_STATUS", "该兜底任务当前不可领取", 409)
+        return self.repository.update_policy_fallback_task(
+            task_id,
+            {"status": "in_progress", "attempts": int(task.get("attempts") or 0) + 1},
+        )
+
+    def fail_browser_fallback_task(self, task_id: str, reason: str) -> dict[str, Any]:
+        try:
+            task = self.repository.get_policy_fallback_task(task_id)
+        except KeyError:
+            raise CrawlServiceError("NOT_FOUND", f"Fallback task not found: {task_id}", 404) from None
+        if task.get("status") in {"archived", "completed"}:
+            return task
+        return self.repository.update_policy_fallback_task(
+            task_id,
+            {"status": "failed", "lastError": reason.strip()},
+        )
+
+    def _archive_browser_fallback_tasks(
+        self, *, source_id: str, requested_url: str, artifact_id: str
+    ) -> str | None:
+        archived_id: str | None = None
+        for task in self.repository.list_policy_fallback_tasks():
+            if (
+                task.get("sourceId") == source_id
+                and task.get("requestedUrl") == requested_url
+                and task.get("status") in FALLBACK_TASK_ACTIVE_STATUSES
+            ):
+                self.repository.update_policy_fallback_task(
+                    task["id"], {"status": "archived", "artifactId": artifact_id, "lastError": None}
+                )
+                archived_id = str(task["id"])
+        return archived_id
+
     def crawl_source_now(self, source_id: str, *, raw_dir: Path) -> dict[str, Any]:
         """一键抓取：保存原文、记录变更比对，并把解析出的建议值写给该城市场景。
 
         抓取失败也保留失败记录，且不删除上一次成功结果（PRD 11.6）。
         """
-        try:
-            source = self.repository.update_data_source(source_id, {})
-        except KeyError:
-            raise CrawlServiceError("NOT_FOUND", f"Data source not found: {source_id}", 404) from None
+        source = self._source(source_id)
         if source.get("status") == "paused":
             raise CrawlServiceError("POLICY_SOURCE_DISABLED", "该官网来源已停用，请先启用", 409)
         url = source.get("url")
         if not url or not str(url).strip():
             raise CrawlServiceError("POLICY_SOURCE_URL_REQUIRED", "该来源没有配置官网链接", 400)
+        requested_url = str(url).strip()
+        pending_task = self._pending_browser_fallback_task(source, requested_url)
+        if pending_task is not None:
+            raise self._browser_required_error(pending_task)
 
         previous_success = next(
             (
@@ -208,7 +423,7 @@ class PolicyService:
 
         try:
             result = crawl_source(
-                str(url).strip(),
+                requested_url,
                 raw_dir,
                 timeout_seconds=int(source.get("timeoutSeconds") or 0) or None,
                 max_bytes=int(source.get("maxBytes") or 0) or None,
@@ -216,11 +431,18 @@ class PolicyService:
             )
         except CrawlError as error:
             details = crawl_error_details(error)
+            if details.get("fallbackAction") == "browser_search":
+                task = self._ensure_browser_fallback_task(
+                    source,
+                    requested_url=requested_url,
+                    details={**details, "message": str(error)},
+                )
+                details["fallbackTaskId"] = task["id"]
             self.repository.create_crawl_artifact(
                 {
                     "sourceId": source_id,
                     "cityId": source["cityId"],
-                    "requestedUrl": str(url).strip(),
+                    "requestedUrl": requested_url,
                     "finalUrl": None,
                     "httpStatus": details["httpStatus"],
                     "contentType": None,
@@ -403,9 +625,12 @@ class PolicyService:
             source: dict[str, Any] | None = None
             if source_id:
                 try:
-                    source = self.repository.update_data_source(str(source_id), {})
-                except KeyError:
-                    source = None
+                    source = self._source(str(source_id))
+                except CrawlServiceError as error:
+                    if error.status_code == 404:
+                        source = None
+                    else:
+                        raise
 
             if source is not None and source.get("status") == "paused":
                 results.append(
@@ -417,6 +642,24 @@ class PolicyService:
                     }
                 )
                 continue
+
+            if source is not None:
+                pending_task = self._pending_browser_fallback_task(source, url)
+                if pending_task is not None:
+                    results.append(
+                        {
+                            "url": url,
+                            "sourceId": source_id,
+                            "status": "browser_required",
+                            "errorMessage": "该来源已进入 WorkBuddy 浏览器兜底队列，系统不会重复 HTTP 抓取",
+                            "httpStatus": pending_task.get("httpStatus"),
+                            "errorCode": pending_task.get("errorCode") or "POLICY_SOURCE_BROWSER_REQUIRED",
+                            "fallbackAction": pending_task.get("fallbackAction") or "browser_search",
+                            "fallbackReason": pending_task.get("fallbackReason"),
+                            "fallbackTaskId": pending_task.get("id"),
+                        }
+                    )
+                    continue
 
             previous_success: dict[str, Any] | None = None
             if source_id:
@@ -443,6 +686,14 @@ class PolicyService:
                 )
             except CrawlError as error:
                 details = crawl_error_details(error)
+                if source is not None and details.get("fallbackAction") == "browser_search":
+                    task = self._ensure_browser_fallback_task(
+                        source,
+                        requested_url=url,
+                        details={**details, "message": str(error)},
+                        research_run_id=research_run_id,
+                    )
+                    details["fallbackTaskId"] = task["id"]
                 if source_id and city_id:
                     self.repository.create_crawl_artifact(
                         {
@@ -607,7 +858,16 @@ class PolicyService:
             None,
         )
         if previous_success and previous_success.get("sha256") == digest:
-            return {"artifact": previous_success, "idempotent": True}
+            task_id = self._archive_browser_fallback_tasks(
+                source_id=source_key,
+                requested_url=requested,
+                artifact_id=str(previous_success["artifactId"]),
+            )
+            return {
+                "artifact": previous_success,
+                "idempotent": True,
+                **({"fallbackTaskId": task_id} if task_id else {}),
+            }
 
         change_status = (
             "first_fetch"
@@ -654,7 +914,16 @@ class PolicyService:
                 "lastFallbackReason": None,
             },
         )
-        return {"artifact": artifact, "idempotent": False}
+        task_id = self._archive_browser_fallback_tasks(
+            source_id=source_key,
+            requested_url=requested,
+            artifact_id=str(artifact["artifactId"]),
+        )
+        return {
+            "artifact": artifact,
+            "idempotent": False,
+            **({"fallbackTaskId": task_id} if task_id else {}),
+        }
 
     def upload_document(
         self,

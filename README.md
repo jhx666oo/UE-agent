@@ -60,7 +60,7 @@
 - 前端代码：总览、城市项目、政策资料和兼容入口已完成；主导航保留总览、城市测算、政策资料、城市对比四项
 - 计算引擎：Python 纯计算域已接入并通过基准回归
 - 本地 API 与前端：FastAPI、动态参数表单和结果复核已接入
-- 政策资料：已按需求文档改造为「新增城市自动发现 + 官网来源 + 一键抓取 + 灰色建议值」模式：后端提供城市入场任务、官方来源自动入池、普通来源候选、单个/全部抓取、来源新鲜度、SSRF 防护、原文留存、结构化建议值和 CSV/ZIP 导出；建议值需人工采用后才写入城市参数
+- 政策资料：已按需求文档改造为「新增城市自动发现 + 官网来源 + 一键抓取 + 灰色建议值」模式：后端提供城市入场任务、官方来源自动入池、普通来源候选、单个/全部抓取、来源新鲜度、SSRF 防护、原文留存、结构化建议值和 CSV/ZIP 导出；WAF、网络/TLS、超时和大响应会进入 WorkBuddy 浏览器兜底队列，并抑制重复 HTTP；建议值需人工采用后才写入城市参数
 - 部署环境：本地运行为准，云端资源不依赖
 
 ## 本阶段运行方式
@@ -89,7 +89,7 @@ WorkBuddy 的账号级定时任务不能随 Git 复制，但可按 `.workbuddy/a
 
 政策更新还支持按需实时检索：页面点击“AI 实时更新政策”，或在 WorkBuddy 对话中提出“更新长沙政策”，都会创建同一种 `research-runs` 任务。WorkBuddy 使用 brief 中带当前年份的查询词搜索最新官方文章、统计公报和 PDF，再通过 API 抓取原文、保存本地版本并回传带逐字引用的字段建议值。页面创建的任务会先显示 `queued` 和可复制任务提示，直到 WorkBuddy 实际执行；建议值仍需人工在城市测算页采用后才影响结果。
 
-实时检索接口包括 `POST/GET /api/policies/research-runs`、`GET /api/policies/research-runs/{runId}/brief`、`POST /api/policies/research-runs/{runId}/retry`、`POST /api/policies/research-runs/{runId}/results`、`POST /api/policies/browser-artifacts` 和 `POST /api/policies/research-runs/{runId}/complete`。HTTP 抓取受阻时由 WorkBuddy 浏览器回传官方正文并归档，具体执行顺序见 `.workbuddy/skills/policy-ai-crawler/SKILL.md`。
+实时检索接口包括 `POST/GET /api/policies/research-runs`、`GET /api/policies/research-runs/{runId}/brief`、`POST /api/policies/research-runs/{runId}/retry`、`POST /api/policies/research-runs/{runId}/results`、`POST /api/policies/browser-artifacts` 和 `POST /api/policies/research-runs/{runId}/complete`。HTTP 抓取受阻时由 WorkBuddy 浏览器回传官方正文并归档；失败来源任务可通过 `GET /api/policies/fallback-tasks` 查看，并由 `/claim`、`/fail` 管理生命周期，具体执行顺序见 `.workbuddy/skills/policy-ai-crawler/SKILL.md`。
 
 验证 U1 模型与后端：
 

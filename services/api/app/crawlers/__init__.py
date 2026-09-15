@@ -267,7 +267,13 @@ def crawl_source(
 
     content = response.content
     if len(content) > limit:
-        raise CrawlError(f"响应大小 {len(content)} 字节超过上限 {limit} 字节，已中止保存")
+        raise CrawlError(
+            f"响应大小 {len(content)} 字节超过上限 {limit} 字节，已转 WorkBuddy 浏览器读取",
+            http_status=response.status_code,
+            error_code="CONTENT_TOO_LARGE_BROWSER_FALLBACK",
+            fallback_action="browser_search",
+            fallback_reason="content_too_large",
+        )
 
     content_type = response.headers.get("content-type", "application/octet-stream")
     digest = hashlib.sha256(content).hexdigest()
