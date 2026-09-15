@@ -61,6 +61,7 @@ describe("Dashboard API client", () => {
         activeSourceCount: 0,
         crawlCount: 0,
         suggestionCount: 0,
+        fallbackRequiredCount: 0,
         cities: [],
         alerts: [],
       },

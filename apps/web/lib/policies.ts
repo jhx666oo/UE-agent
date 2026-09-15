@@ -2,6 +2,7 @@ import { apiFetch, buildApiUrl } from "@/lib/api";
 
 export type PolicyDocumentStatus = "uploaded" | "parsing" | "review_pending" | "approved" | "rejected";
 export type DataSourceStatus = "active" | "paused" | "error";
+export type PolicySourceStatus = DataSourceStatus | "missing" | "partial_failed" | "fallback_required";
 
 export type PolicyDocument = {
   id: string;
@@ -32,6 +33,12 @@ export type DataSource = {
   lastFetchedAt?: string | null;
   lastHttpStatus?: number | null;
   lastChangeStatus?: string | null;
+  lastFetchMode?: "http" | "workbuddy_browser" | string | null;
+  lastErrorCode?: string | null;
+  lastFallbackAction?: "browser_search" | string | null;
+  lastFallbackReason?: string | null;
+  fallbackAction?: "browser_search" | string | null;
+  fallbackReason?: string | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -53,6 +60,10 @@ export type CrawlArtifact = {
   status: "success" | "failed";
   errorMessage: string | null;
   researchRunId?: string | null;
+  fetchMode?: "http" | "workbuddy_browser" | string | null;
+  errorCode?: string | null;
+  fallbackAction?: "browser_search" | string | null;
+  fallbackReason?: string | null;
   suggestions?: Array<{ fieldId: string; name: string; value: number | string; quote: string }>;
 };
 
@@ -71,12 +82,13 @@ export type PolicyCitySummary = {
   pendingReviewCount: number;
   approvedFactCount: number;
   completeness: number | null;
-  sourceStatus: DataSourceStatus | "missing";
+  sourceStatus: PolicySourceStatus;
   affectedProjectCount: number;
+  fallbackRequiredCount: number;
 };
 
 export type PolicyAlert = {
-  type: "policy";
+  type: "policy" | "policy-source" | "policy-browser-fallback" | "policy-suggestion";
   severity: "info" | "warning" | "danger";
   cityId: string;
   cityName: string;
@@ -92,6 +104,7 @@ export type PolicyOverviewResponse = {
   activeSourceCount: number;
   crawlCount: number;
   suggestionCount: number;
+  fallbackRequiredCount: number;
   alerts: PolicyAlert[];
 };
 
@@ -120,6 +133,7 @@ export type PolicyCityDetailResponse = {
   sourceCount: number;
   activeSourceCount: number;
   errorSourceCount: number;
+  fallbackRequiredCount: number;
   crawlCount: number;
   lastFetchedAt: string | null;
   suggestionCount: number;
@@ -223,6 +237,8 @@ export type CrawlTargetSource = {
   status: DataSourceStatus;
   lastFetchedAt: string | null;
   lastChangeStatus: string | null;
+  fallbackAction?: "browser_search" | string | null;
+  fallbackReason?: string | null;
   lastArtifactId: string | null;
   lastArtifactSha256: string | null;
   fieldsToFill: string[];
@@ -408,10 +424,12 @@ export function crawlPolicySource(sourceId: string) {
 export type CrawlAllItem = {
   sourceId: string;
   name: string | null;
-  status: "success" | "failed" | "skipped";
+  status: "success" | "failed" | "skipped" | "browser_required";
   changeStatus: "first_fetch" | "unchanged" | "new_version" | null;
   httpStatus: number | null;
   message: string | null;
+  fallbackAction?: "browser_search" | string | null;
+  fallbackReason?: string | null;
 };
 
 export type CrawlAllSummary = {
@@ -423,6 +441,7 @@ export type CrawlAllSummary = {
   skipped: number;
   unchanged: number;
   changed: number;
+  browserRequired?: number;
   results: CrawlAllItem[];
 };
 
@@ -430,6 +449,26 @@ export type CrawlAllSummary = {
 export function crawlAllPolicySources(cityId: string) {
   return apiFetch<CrawlAllSummary>(`/api/policies/cities/${encodeURIComponent(cityId)}/crawl-all`, {
     method: "POST",
+  });
+}
+
+export type BrowserArtifactInput = {
+  cityId: string;
+  sourceId: string;
+  researchRunId?: string;
+  requestedUrl: string;
+  finalUrl?: string;
+  title?: string;
+  content: string;
+  contentType?: string;
+  fetchMode?: "workbuddy_browser";
+};
+
+/** WorkBuddy 浏览器通道回传官方正文；前端保留同一 API 类型供集成侧复用。 */
+export function archivePolicyBrowserArtifact(input: BrowserArtifactInput) {
+  return apiFetch<{ artifact: CrawlArtifact; idempotent: boolean }>("/api/policies/browser-artifacts", {
+    method: "POST",
+    body: JSON.stringify({ fetchMode: "workbuddy_browser", ...input }),
   });
 }
 

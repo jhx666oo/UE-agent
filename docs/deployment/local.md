@@ -34,6 +34,9 @@ pnpm dev
 `.workbuddy/automations/policy-ai-sync.template.json`：WorkBuddy 每日 08:00 读取全部城市，
 新增城市先走 `policy-city-onboarding`，然后逐城执行实时研究和回传。定时任务记录属于
 WorkBuddy 账号，接手方需要在自己的账号中按模板创建一次；代码、Skill、数据和执行规则均随交付包携带。
+当固定官网被 JS/WAF、超时或 TLS 拦截时，Skill 会自动切换 WorkBuddy 浏览器通道，
+把浏览器看到的官方正文通过 `/api/policies/browser-artifacts` 归档后再抽取；该流程对全部城市
+复用，不需要新增城市专门编写抓取代码。
 
 ## 数据位置
 

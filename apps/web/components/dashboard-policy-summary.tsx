@@ -35,11 +35,12 @@ export function DashboardPolicySummary({ summary }: Readonly<{ summary: Dashboar
         </Button>
       </CardHeader>
       <CardContent className="space-y-4">
-        <div className="grid gap-3 sm:grid-cols-4">
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
           <Metric label="已配置来源" value={summary.sourceCount} />
           <Metric label="正常来源" value={summary.activeSourceCount} />
           <Metric label="抓取记录" value={summary.crawlCount} />
           <Metric label="待采用建议值" value={summary.suggestionCount} />
+          <Metric label="需浏览器兜底" value={summary.fallbackRequiredCount} />
         </div>
         {summary.cities.length === 0 ? (
           <p className="rounded-md border border-border bg-surface-subtle px-3 py-2 text-sm text-muted-foreground">
@@ -65,6 +66,7 @@ export function DashboardPolicySummary({ summary }: Readonly<{ summary: Dashboar
                         {city.cityName}
                       </Link>
                       {city.errorSourceCount > 0 ? <Badge className="ml-2" variant="danger">{city.errorSourceCount} 个异常</Badge> : null}
+                      {city.fallbackRequiredCount > 0 ? <Badge className="ml-2" variant="warning">{city.fallbackRequiredCount} 个需浏览器</Badge> : null}
                     </td>
                     <td className="px-3 py-2.5 text-right tabular-nums">{city.activeSourceCount}/{city.sourceCount}</td>
                     <td className="px-3 py-2.5 text-right tabular-nums">{city.crawlCount}</td>

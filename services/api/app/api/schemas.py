@@ -131,6 +131,22 @@ class FetchRequestBatch(BaseModel):
     researchRunId: str | None = Field(default=None, max_length=120)
 
 
+class BrowserArtifactSubmit(BaseModel):
+    """WorkBuddy 浏览器/AI 通道回传的官方正文。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    cityId: str = Field(min_length=1, max_length=80)
+    sourceId: str = Field(min_length=1, max_length=120)
+    researchRunId: str | None = Field(default=None, max_length=120)
+    requestedUrl: str = Field(min_length=1, max_length=2000)
+    finalUrl: str | None = Field(default=None, max_length=2000)
+    title: str | None = Field(default=None, max_length=300)
+    content: str = Field(min_length=1, max_length=200000)
+    contentType: str = Field(default="text/plain; charset=utf-8", max_length=120)
+    fetchMode: Literal["workbuddy_browser"] = "workbuddy_browser"
+
+
 class ExtractionFact(BaseModel):
     """WorkBuddy 抽取出的单个字段值。quote 必填 —— 空引用不予采信。"""
 

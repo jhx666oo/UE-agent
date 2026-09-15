@@ -36,6 +36,7 @@ from ..domain.policy.service import CrawlServiceError, PolicyService
 from ..repository import ProjectRepository
 from .schemas import (
     BulkSourceBatch,
+    BrowserArtifactSubmit,
     DataSourceCreate,
     DataSourceUpdate,
     ExtractionSubmissionRequest,
@@ -358,11 +359,14 @@ def bulk_create_policy_sources(
         try:
             artifact = service.crawl_source_now(str(source.get("id")), raw_dir=raw_dir)
         except CrawlServiceError as error:
-            repository.update_data_source(
-                str(source.get("id")),
-                {"status": "paused", "note": f"自动预置时不可达，已停用：{error.message}"},
-            )
-            entry.update(status="unreachable", message=error.message)
+            if error.details.get("fallbackAction") == "browser_search":
+                entry.update(status="browser_required", message=error.message, **error.details)
+            else:
+                repository.update_data_source(
+                    str(source.get("id")),
+                    {"status": "paused", "note": f"自动预置时不可达，已停用：{error.message}"},
+                )
+                entry.update(status="unreachable", message=error.message, **error.details)
             results.append(entry)
             continue
 
@@ -382,6 +386,7 @@ def bulk_create_policy_sources(
         "duplicate": sum(1 for item in results if item["status"] == "duplicate"),
         "rejected": sum(1 for item in results if item["status"] == "rejected"),
         "unreachable": sum(1 for item in results if item["status"] == "unreachable"),
+        "browserRequired": sum(1 for item in results if item["status"] == "browser_required"),
         "results": results,
     }
 
@@ -418,7 +423,7 @@ def crawl_policy_source(source_id: str, request: Request) -> dict[str, Any] | JS
     except CrawlServiceError as error:
         return JSONResponse(
             status_code=error.status_code,
-            content={"error": {"code": error.code, "message": error.message}},
+            content={"error": {"code": error.code, "message": error.message, **error.details}},
         )
 
 
@@ -448,7 +453,9 @@ def crawl_all_policy_sources(city_id: str, request: Request) -> dict[str, Any]:
                     "name": name,
                     "status": "skipped",
                     "changeStatus": None,
-                    "httpStatus": None,
+                    "httpStatus": source.get("lastHttpStatus"),
+                    "fallbackAction": source.get("lastFallbackAction"),
+                    "fallbackReason": source.get("lastFallbackReason"),
                     "message": "来源已停用，未抓取",
                 }
             )
@@ -460,9 +467,9 @@ def crawl_all_policy_sources(city_id: str, request: Request) -> dict[str, Any]:
                 {
                     "sourceId": source_id,
                     "name": name,
-                    "status": "failed",
+                    "status": "browser_required" if error.details.get("fallbackAction") == "browser_search" else "failed",
                     "changeStatus": None,
-                    "httpStatus": None,
+                    **error.details,
                     "message": error.message,
                 }
             )
@@ -474,6 +481,8 @@ def crawl_all_policy_sources(city_id: str, request: Request) -> dict[str, Any]:
                 "status": "success",
                 "changeStatus": artifact.get("changeStatus"),
                 "httpStatus": artifact.get("httpStatus"),
+                "fallbackAction": artifact.get("fallbackAction"),
+                "fallbackReason": artifact.get("fallbackReason"),
                 "message": None,
             }
         )
@@ -483,7 +492,7 @@ def crawl_all_policy_sources(city_id: str, request: Request) -> dict[str, Any]:
         "crawledAt": datetime.now(timezone.utc).isoformat(),
         "total": len(results),
         "succeeded": sum(1 for item in results if item["status"] == "success"),
-        "failed": sum(1 for item in results if item["status"] == "failed"),
+        "failed": sum(1 for item in results if item["status"] in {"failed", "browser_required"}),
         "skipped": sum(1 for item in results if item["status"] == "skipped"),
         # 未变 / 有更新 直接对应「省下的抽取量」与「值得送 AI 的量」
         "unchanged": sum(1 for item in results if item.get("changeStatus") == "unchanged"),
@@ -784,6 +793,43 @@ def policy_fetch_requests(payload: FetchRequestBatch, request: Request) -> dict[
     }
 
 
+@router.post("/policies/browser-artifacts", response_model=None)
+def archive_policy_browser_artifact(
+    payload: BrowserArtifactSubmit, request: Request
+) -> dict[str, Any] | JSONResponse:
+    """接收 WorkBuddy 浏览器通道看到的官方正文，归档后进入同一证据链。"""
+    unauthorized = _agent_token_required(request)
+    if unauthorized is not None:
+        return unauthorized
+    if payload.researchRunId:
+        try:
+            run = _research_service(request).get_run(payload.researchRunId)
+        except KeyError:
+            return error_payload("NOT_FOUND", f"政策检索任务不存在：{payload.researchRunId}")
+        if str(run["cityId"]) != payload.cityId:
+            return JSONResponse(
+                status_code=400,
+                content={"error": {"code": "CITY_RESEARCH_RUN_MISMATCH", "message": "回传城市与检索任务不匹配"}},
+            )
+    try:
+        return PolicyService(repository_from_request(request)).archive_browser_artifact(
+            city_id=payload.cityId,
+            source_id=payload.sourceId,
+            research_run_id=payload.researchRunId,
+            requested_url=payload.requestedUrl,
+            final_url=payload.finalUrl,
+            title=payload.title,
+            content=payload.content,
+            content_type=payload.contentType,
+            raw_dir=_raw_sources_dir(request),
+        )
+    except CrawlServiceError as error:
+        return JSONResponse(
+            status_code=error.status_code,
+            content={"error": {"code": error.code, "message": error.message, **error.details}},
+        )
+
+
 @router.post("/policies/extraction-submissions", response_model=None)
 def policy_extraction_submissions(
     payload: ExtractionSubmissionRequest, request: Request
@@ -953,11 +999,11 @@ _EXPORT_FIELD_HEADER = [
 ]
 _EXPORT_SOURCE_HEADER = [
     "城市", "来源ID", "来源名称", "类型", "链接", "状态",
-    "最近抓取时间", "最近HTTP状态", "最近变更", "备注",
+    "最近抓取时间", "最近HTTP状态", "最近变更", "最近抓取通道", "兜底动作", "备注",
 ]
 _EXPORT_ARTIFACT_HEADER = [
     "抓取记录ID", "来源ID", "城市", "请求URL", "最终URL", "抓取时间", "HTTP状态",
-    "内容类型", "字节数", "SHA256", "标题", "变更状态", "状态", "错误信息",
+    "内容类型", "字节数", "SHA256", "标题", "变更状态", "状态", "抓取通道", "兜底动作", "错误信息",
 ]
 
 
@@ -1001,12 +1047,13 @@ def _zip_response(source_id: str, artifacts: list[dict[str, Any]], request: Requ
                 [
                     artifact_id, raw_name if stored_path else "", artifact.get("sha256"),
                     artifact.get("title"), artifact.get("fetchedAt"), artifact.get("httpStatus"),
-                    artifact.get("changeStatus"), artifact.get("status"), artifact.get("errorMessage"),
+                    artifact.get("changeStatus"), artifact.get("status"), artifact.get("fetchMode"),
+                    artifact.get("fallbackAction"), artifact.get("errorMessage"),
                 ]
             )
         manifest_csv = io.StringIO()
         writer = csv.writer(manifest_csv)
-        writer.writerow(["抓取记录ID", "原始文件名", "SHA256", "标题", "抓取时间", "HTTP状态", "变更状态", "状态", "错误信息"])
+        writer.writerow(["抓取记录ID", "原始文件名", "SHA256", "标题", "抓取时间", "HTTP状态", "变更状态", "状态", "抓取通道", "兜底动作", "错误信息"])
         for row in manifest_rows:
             writer.writerow(["" if value is None else value for value in row])
         archive.writestr("manifest.csv", ("\ufeff" + manifest_csv.getvalue()).encode("utf-8"))
@@ -1122,7 +1169,8 @@ def export_policies(
             [
                 [
                     s.get("cityId"), s.get("id"), s.get("name"), s.get("kind"), s.get("url"), s.get("status"),
-                    s.get("lastFetchedAt"), s.get("lastHttpStatus"), s.get("lastChangeStatus"), s.get("note"),
+                    s.get("lastFetchedAt"), s.get("lastHttpStatus"), s.get("lastChangeStatus"),
+                    s.get("lastFetchMode"), s.get("fallbackAction") or s.get("lastFallbackAction"), s.get("note"),
                 ]
                 for s in sources
             ],
@@ -1136,7 +1184,8 @@ def export_policies(
                 [
                     a.get("artifactId"), a.get("sourceId"), a.get("cityId"), a.get("requestedUrl"), a.get("finalUrl"),
                     a.get("fetchedAt"), a.get("httpStatus"), a.get("contentType"), a.get("contentLength"),
-                    a.get("sha256"), a.get("title"), a.get("changeStatus"), a.get("status"), a.get("errorMessage"),
+                    a.get("sha256"), a.get("title"), a.get("changeStatus"), a.get("status"), a.get("fetchMode"),
+                    a.get("fallbackAction"), a.get("errorMessage"),
                 ]
                 for a in artifacts
             ],

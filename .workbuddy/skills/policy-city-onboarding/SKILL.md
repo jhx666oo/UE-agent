@@ -117,6 +117,12 @@ curl -s --noproxy '*' -X POST "$BASE_URL/api/policies/cities/<城市ID>/sources/
 **保守策略**：一次别提交太多（建议 ≤ 12 条），先把「城市级 3 条 + 省级复用」跑通，
 再按 `policy-ai-crawler` 的字段族补栏目页与具体文档。
 
+如果验证阶段返回 `status: browser_required` 或结果含 `fallbackAction: "browser_search"`，
+不要把来源停用，也不要反复重试纯 HTTP；保留该正式来源并把异常交给
+`policy-ai-crawler` 的 WorkBuddy 浏览器兜底流程。浏览器读到正文后回传
+`POST /api/policies/browser-artifacts`，后续仍使用同一个 `sourceId` 做字段抽取和审计。
+这套处理对每个未来新增城市自动复用，不需要为城市编写专门抓取代码。
+
 ### Step 4 · 抓取 + 抽字段
 
 ```bash

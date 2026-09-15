@@ -111,6 +111,21 @@ curl -s --noproxy '*' -X POST "$BASE/api/policies/fetch-requests" \
   | "$PY" "$ASSERT" fetch
 
 echo
+echo "==> 4c. 模拟 HTTP 412：确认转交 WorkBuddy 浏览器兜底并归档正文"
+BLOCKED_SOURCE_RESPONSE=$(curl -s --noproxy '*' -X POST "$BASE/api/policies/sources" \
+  -H 'Content-Type: application/json' \
+  -d "{\"cityId\":\"changsha\",\"name\":\"长沙医保局（浏览器兜底夹具）\",\"url\":\"http://127.0.0.1:${FIXTURE_PORT}/challenge\",\"kind\":\"government\"}")
+BLOCKED_SOURCE_ID=$(echo "$BLOCKED_SOURCE_RESPONSE" | "$PY" -c "import sys,json;print(json.load(sys.stdin)['id'])")
+curl -s --noproxy '*' -X POST "$BASE/api/policies/fetch-requests" \
+  -H 'Content-Type: application/json' \
+  -d "{\"requests\":[{\"url\":\"http://127.0.0.1:${FIXTURE_PORT}/challenge\",\"cityId\":\"changsha\",\"sourceId\":\"$BLOCKED_SOURCE_ID\"}]}" \
+  | "$PY" "$ASSERT" fallback-fetch
+BROWSER_ARTIFACT=$(curl -s --noproxy '*' -X POST "$BASE/api/policies/browser-artifacts" \
+  -H 'Content-Type: application/json' \
+  -d "{\"cityId\":\"changsha\",\"sourceId\":\"$BLOCKED_SOURCE_ID\",\"requestedUrl\":\"http://127.0.0.1:${FIXTURE_PORT}/challenge\",\"finalUrl\":\"http://127.0.0.1:${FIXTURE_PORT}/policy\",\"title\":\"长沙市长期护理保险实施办法（浏览器读取）\",\"content\":\"长沙市长期护理保险实施办法。基金支付比例为80%。\",\"contentType\":\"text/plain; charset=utf-8\",\"fetchMode\":\"workbuddy_browser\"}")
+echo "$BROWSER_ARTIFACT" | "$PY" "$ASSERT" browser-artifact
+
+echo
 echo "==> 5. 回传抽取结果（含故意构造的非法条目，验证 7 项校验）"
 curl -s --noproxy '*' -X POST "$BASE/api/policies/extraction-submissions" \
   -H 'Content-Type: application/json' -d '{

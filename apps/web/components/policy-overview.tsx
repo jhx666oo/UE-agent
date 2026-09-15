@@ -21,6 +21,8 @@ const STATUS_LABELS = {
   paused: { label: "来源暂停", variant: "warning" as const },
   error: { label: "来源异常", variant: "danger" as const },
   missing: { label: "暂无来源", variant: "neutral" as const },
+  partial_failed: { label: "部分失败", variant: "warning" as const },
+  fallback_required: { label: "需浏览器通道", variant: "warning" as const },
 };
 
 function Metric({ label, value }: Readonly<{ label: string; value: number | string }>) {
@@ -152,6 +154,9 @@ export function PolicyOverview({
           <Badge variant="info">已配置来源 {data.sourceCount}</Badge>
           <Badge variant="success">已抓取记录 {data.crawlCount}</Badge>
           <Badge variant="warning">待采用建议值 {data.suggestionCount}</Badge>
+          {data.fallbackRequiredCount > 0 ? (
+            <Badge variant="warning">需浏览器兜底 {data.fallbackRequiredCount}</Badge>
+          ) : null}
         </div>
       </div>
 
@@ -184,9 +189,10 @@ export function PolicyOverview({
                   <Badge variant={sourceStatus.variant}>{sourceStatus.label}</Badge>
                 </CardHeader>
                 <CardContent className="space-y-4 pt-0">
-                  <div className="grid gap-3 sm:grid-cols-4">
+                  <div className="grid gap-3 sm:grid-cols-5">
                     <Metric label="官网来源" value={`${city.sourceCount} 个`} />
                     <Metric label="正常来源" value={`${city.activeSourceCount} 个`} />
+                    <Metric label="需浏览器兜底" value={`${city.fallbackRequiredCount} 个`} />
                     <Metric label="待采用建议值" value={`${city.suggestionCount} 项`} />
                     <Metric label="关联项目" value={`${city.affectedProjectCount} 个`} />
                   </div>

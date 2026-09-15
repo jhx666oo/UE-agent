@@ -179,6 +179,12 @@ export function PolicyCityDetail({
                 {crawlAllSummary.skipped > 0 ? ` · 跳过 ${crawlAllSummary.skipped}` : ""} · 未变{" "}
                 <span className="font-medium">{crawlAllSummary.unchanged}</span> · 有更新{" "}
                 <span className="font-medium">{crawlAllSummary.changed}</span>
+                {(crawlAllSummary.browserRequired ?? 0) > 0 ? (
+                  <>
+                    {" · 需浏览器兜底 "}
+                    <span className="font-medium">{crawlAllSummary.browserRequired}</span>
+                  </>
+                ) : null}
               </p>
               <p className="text-xs text-muted-foreground">
                 共 {crawlAllSummary.total} 个来源，{formatPolicyDate(crawlAllSummary.crawledAt)}。
@@ -191,7 +197,8 @@ export function PolicyCityDetail({
                     .slice(0, 6)
                     .map((item) => (
                       <li key={item.sourceId} className="text-xs text-warning">
-                        {item.name ?? item.sourceId}：{item.message ?? item.status}
+                        {item.name ?? item.sourceId}：
+                        {item.status === "browser_required" ? "需 WorkBuddy 浏览器兜底" : item.message ?? item.status}
                       </li>
                     ))}
                 </ul>
@@ -241,6 +248,9 @@ export function PolicyCityDetail({
                       <div className="flex items-center gap-2">
                         <p className="truncate text-sm font-medium">{source.name}</p>
                         <Badge variant={status.variant}>{status.label}</Badge>
+                        {source.fallbackAction === "browser_search" ? (
+                          <Badge variant="warning">需浏览器通道</Badge>
+                        ) : null}
                         {freshnessBadge(source.id)}
                       </div>
                       <p className="mt-1 truncate text-xs text-muted-foreground">
@@ -313,12 +323,16 @@ export function PolicyCityDetail({
                         {CHANGE_LABELS[artifact.changeStatus] ?? artifact.changeStatus}
                       </Badge>
                     ) : null}
+                    {artifact.fetchMode === "workbuddy_browser" ? (
+                      <Badge variant="info">WorkBuddy 浏览器</Badge>
+                    ) : null}
                   </div>
                   <p className="mt-1 text-xs text-muted-foreground">
                     {formatPolicyDate(artifact.fetchedAt)}
                     {artifact.httpStatus ? ` · HTTP ${artifact.httpStatus}` : ""}
                     {artifact.contentType ? ` · ${artifact.contentType.split(";")[0]}` : ""}
                     {artifact.errorMessage ? ` · ${artifact.errorMessage}` : ""}
+                    {artifact.fallbackReason ? ` · 兜底原因：${artifact.fallbackReason}` : ""}
                   </p>
                   {artifact.suggestions && artifact.suggestions.length > 0 ? (
                     <p className="mt-1 text-xs text-info">

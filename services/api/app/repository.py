@@ -3,10 +3,12 @@ from __future__ import annotations
 import copy
 import json
 import os
+import re
 import tempfile
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
+from collections import defaultdict
 from collections.abc import Callable
 from typing import Any, Mapping, Protocol
 
@@ -54,6 +56,30 @@ def normalize_store_payload(payload: Any) -> dict[str, Any]:
             raise ValueError(f"Invalid {collection} store")
         payload.setdefault(collection, [])
     return payload
+
+
+def enrich_legacy_crawl_artifact(artifact: Mapping[str, Any]) -> dict[str, Any]:
+    """给 009 迁移前的 HTTP 失败记录补出可行动的浏览器兜底元数据。"""
+    result = copy.deepcopy(dict(artifact))
+    if result.get("status") != "failed" or result.get("fallbackAction"):
+        return result
+    message = str(result.get("errorMessage") or "")
+    match = re.search(r"HTTP\s+(\d{3})", message, flags=re.IGNORECASE)
+    if match is None:
+        return result
+    status = int(match.group(1))
+    if status not in {403, 412, 429} and status < 500:
+        return result
+    result.update(
+        {
+            "httpStatus": result.get("httpStatus") or status,
+            "fetchMode": result.get("fetchMode") or "http",
+            "errorCode": result.get("errorCode") or f"HTTP_{status}_BROWSER_REQUIRED",
+            "fallbackAction": "browser_search",
+            "fallbackReason": "js_challenge" if status == 412 else "http_blocked",
+        }
+    )
+    return result
 
 
 class PolicyFileStore(Protocol):
@@ -681,9 +707,33 @@ class JsonProjectRepository:
         return copy.deepcopy(scenario)
 
     def list_data_sources(self, city_id: str | None = None) -> list[dict[str, Any]]:
-        sources = self._read().get("dataSources", [])
+        payload = self._read()
+        sources = payload.get("dataSources", [])
         selected = [source for source in sources if city_id is None or source.get("cityId") == city_id]
-        return copy.deepcopy(sorted(selected, key=lambda source: source.get("updatedAt", ""), reverse=True))
+        artifacts_by_source: dict[str, list[Mapping[str, Any]]] = defaultdict(list)
+        for artifact in payload.get("crawlArtifacts", []):
+            artifacts_by_source[str(artifact.get("sourceId"))].append(artifact)
+        result: list[dict[str, Any]] = []
+        for source in selected:
+            item = copy.deepcopy(source)
+            item.setdefault("fallbackAction", item.get("lastFallbackAction"))
+            item.setdefault("fallbackReason", item.get("lastFallbackReason"))
+            if not item.get("fallbackAction") and item.get("status") == "error":
+                latest = next(
+                    (
+                        enrich_legacy_crawl_artifact(artifact)
+                        for artifact in reversed(artifacts_by_source.get(str(item.get("id")), []))
+                        if artifact.get("status") == "failed"
+                    ),
+                    None,
+                )
+                if latest and latest.get("fallbackAction"):
+                    item["fallbackAction"] = latest["fallbackAction"]
+                    item["fallbackReason"] = latest.get("fallbackReason")
+                    item.setdefault("lastHttpStatus", latest.get("httpStatus"))
+                    item.setdefault("lastFetchMode", latest.get("fetchMode"))
+            result.append(item)
+        return sorted(result, key=lambda source: source.get("updatedAt", ""), reverse=True)
 
     def create_data_source(self, data: Mapping[str, Any]) -> dict[str, Any]:
         now = utc_now()
@@ -721,9 +771,16 @@ class JsonProjectRepository:
             "timeoutSeconds",
             "maxBytes",
             "note",
+            "lastFetchMode",
+            "lastErrorCode",
+            "lastFallbackAction",
+            "lastFallbackReason",
         ):
-            if key in data and data[key] is not None:
+            if key in data and (data[key] is not None or key.startswith("last")):
                 source[key] = data[key]
+        # 前端展示用短字段；lastFallback* 仍保留给审计和导出。
+        source["fallbackAction"] = source.get("lastFallbackAction")
+        source["fallbackReason"] = source.get("lastFallbackReason")
         source["updatedAt"] = utc_now()
         self._write(payload)
         return copy.deepcopy(source)
@@ -984,12 +1041,12 @@ class JsonProjectRepository:
             if (source_id is None or artifact.get("sourceId") == source_id)
             and (city_id is None or artifact.get("cityId") == city_id)
         ]
-        return copy.deepcopy(selected)
+        return [enrich_legacy_crawl_artifact(artifact) for artifact in selected]
 
     def get_crawl_artifact(self, artifact_id: str) -> dict[str, Any]:
         for artifact in self._read().get("crawlArtifacts", []):
             if artifact.get("artifactId") == artifact_id:
-                return copy.deepcopy(artifact)
+                return enrich_legacy_crawl_artifact(artifact)
         raise KeyError(artifact_id)
 
     def create_crawl_artifact(self, data: Mapping[str, Any]) -> dict[str, Any]:

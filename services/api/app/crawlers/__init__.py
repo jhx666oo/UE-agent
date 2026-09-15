@@ -41,6 +41,21 @@ _CHARSET_ALIASES = {"gb2312": "gb18030", "gbk": "gb18030"}
 class CrawlError(Exception):
     """抓取失败；message 面向用户，不包含敏感信息。"""
 
+    def __init__(
+        self,
+        message: str,
+        *,
+        http_status: int | None = None,
+        error_code: str | None = None,
+        fallback_action: str | None = None,
+        fallback_reason: str | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.http_status = http_status
+        self.error_code = error_code
+        self.fallback_action = fallback_action
+        self.fallback_reason = fallback_reason
+
 
 @dataclass(frozen=True)
 class CrawlResult:
@@ -60,7 +75,12 @@ def _reject_private(hostname: str) -> None:
     try:
         infos = socket.getaddrinfo(hostname, None)
     except socket.gaierror as error:
-        raise CrawlError(f"无法解析目标地址：{hostname}") from error
+        raise CrawlError(
+            "无法解析目标官网，请改用 WorkBuddy 浏览器检索官方页面",
+            error_code="DNS_BROWSER_FALLBACK",
+            fallback_action="browser_search",
+            fallback_reason="network_or_tls",
+        ) from error
     for info in infos:
         address = info[4][0]
         try:
@@ -212,14 +232,34 @@ def crawl_source(
         ) as client:
             response = client.get(target_url)
     except httpx.TimeoutException as error:
-        raise CrawlError("官网抓取超时，请稍后重试或调整超时设置") from error
+        raise CrawlError(
+            "官网抓取超时，请稍后重试或调整超时设置",
+            error_code="NETWORK_TIMEOUT_BROWSER_FALLBACK",
+            fallback_action="browser_search",
+            fallback_reason="timeout",
+        ) from error
     except httpx.TooManyRedirects as error:
         raise CrawlError(f"重定向次数超过 {MAX_REDIRECTS} 次，已中止抓取") from error
-    except (httpx.ConnectError, httpx.NetworkError, httpx.InvalidURL) as error:
-        raise CrawlError("无法连接目标官网，请检查链接是否可公开访问") from error
+    except httpx.InvalidURL as error:
+        raise CrawlError("官网链接格式无效，请检查链接是否可公开访问") from error
+    except (httpx.ConnectError, httpx.NetworkError) as error:
+        raise CrawlError(
+            "无法连接目标官网，请检查链接是否可公开访问",
+            error_code="NETWORK_BROWSER_FALLBACK",
+            fallback_action="browser_search",
+            fallback_reason="network_or_tls",
+        ) from error
 
     if response.status_code >= 400:
-        raise CrawlError(f"官网返回 HTTP {response.status_code}，未保存内容")
+        status = response.status_code
+        browser_fallback = status in {403, 412, 429} or status >= 500
+        raise CrawlError(
+            f"官网返回 HTTP {status}，未保存内容",
+            http_status=status,
+            error_code=f"HTTP_{status}_BROWSER_REQUIRED" if browser_fallback else f"HTTP_{status}",
+            fallback_action="browser_search" if browser_fallback else None,
+            fallback_reason="js_challenge" if status == 412 else "http_blocked" if browser_fallback else None,
+        )
 
     final_url = str(response.url)
     # 重定向后重新校验目标地址，防止跳到内网。

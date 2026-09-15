@@ -73,6 +73,6 @@ export UE_AGENT_DISCOVERY_SEARCH_URL='https://www.baidu.com/s?wd={query}'
 
 ### 按需实时政策检索
 
-“实时”指用户触发后由 WorkBuddy 联网搜索当前年份的政策信息，不承诺 24 小时监听。WorkBuddy 先创建或复用一个城市 research run，再读取 `/brief`，使用动态查询词寻找最新的具体官方文章、统计公报或 PDF；原文必须交给 `/fetch-requests` 由 API 下载、落盘和计算 SHA256，抽取结果通过 `/extraction-submissions` 或 `/research-runs/{runId}/results` 回传。`C6/C7/C8` 只能登记 `notDisclosed`，所有建议值都保持灰色，人工采用后才进入城市参数。
+“实时”指用户触发后由 WorkBuddy 联网搜索当前年份的政策信息，不承诺 24 小时监听。WorkBuddy 先创建或复用一个城市 research run，再读取 `/brief`，使用动态查询词寻找最新的具体官方文章、统计公报或 PDF；原文必须交给 `/fetch-requests` 由 API 下载、落盘和计算 SHA256，HTTP 遇到 JS/WAF、超时或 TLS 失败时改用浏览器读取并回传 `/browser-artifacts` 归档，抽取结果通过 `/extraction-submissions` 或 `/research-runs/{runId}/results` 回传。`C6/C7/C8` 只能登记 `notDisclosed`，所有建议值都保持灰色，人工采用后才进入城市参数。
 
 前端按钮创建的任务默认状态是 `queued`，这表示等待 WorkBuddy 执行，不代表检索已完成。若当前环境没有可调用 WorkBuddy 的桥接器，页面会提供可复制任务提示；在 WorkBuddy 对话中直接说“更新某城市政策”即可执行同一任务协议。回传接口在配置 `UE_AGENT_AGENT_TOKEN` 后必须携带 token。

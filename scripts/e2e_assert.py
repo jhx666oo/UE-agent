@@ -49,6 +49,25 @@ def step_fetch(data: dict) -> None:
         print(f"   正文片段：{(item['text'] or '')[:70]}…")
 
 
+def step_fallback_fetch(data: dict) -> None:
+    assert data["succeeded"] == 0, data
+    assert data["failed"] == 1, data
+    item = data["results"][0]
+    assert item["status"] == "failed", item
+    assert item["httpStatus"] == 412, item
+    assert item["errorCode"] == "HTTP_412_BROWSER_REQUIRED", item
+    assert item["fallbackAction"] == "browser_search", item
+    print(f"   HTTP {item['httpStatus']} 已转为 WorkBuddy 兜底：{item['fallbackReason']}")
+
+
+def step_browser_artifact(data: dict) -> None:
+    artifact = data["artifact"]
+    assert artifact["status"] == "success", artifact
+    assert artifact["fetchMode"] == "workbuddy_browser", artifact
+    assert artifact.get("storedPath"), artifact
+    print(f"   浏览器正文已归档：{artifact['artifactId']}；指纹 {(artifact.get('sha256') or '')[:16]}…")
+
+
 def step_crawl_all(data: dict) -> None:
     assert data["total"] == 1, data
     assert data["succeeded"] == 1, data
@@ -207,6 +226,8 @@ def step_research_complete(data: dict) -> None:
 STEPS = {
     "targets": step_targets,
     "fetch": step_fetch,
+    "fallback-fetch": step_fallback_fetch,
+    "browser-artifact": step_browser_artifact,
     "crawl-all": step_crawl_all,
     "onboarding": step_onboarding,
     "artifacts": step_artifacts,

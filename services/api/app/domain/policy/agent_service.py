@@ -151,6 +151,8 @@ class AgentSubmissionService:
                     "status": source.get("status"),
                     "lastFetchedAt": source.get("lastFetchedAt"),
                     "lastChangeStatus": source.get("lastChangeStatus"),
+                    "fallbackAction": source.get("fallbackAction") or source.get("lastFallbackAction"),
+                    "fallbackReason": source.get("fallbackReason") or source.get("lastFallbackReason"),
                     "lastArtifactId": last_artifact.get("artifactId") if last_artifact else None,
                     "lastArtifactSha256": last_artifact.get("sha256") if last_artifact else None,
                     # 增量感知：该来源上次抓取时尚未填写的字段。

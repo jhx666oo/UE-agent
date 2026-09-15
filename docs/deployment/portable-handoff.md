@@ -10,6 +10,7 @@
 - `.workbuddy/skills/policy-ai-crawler/`：常规政策实时检索与字段抽取 Skill；
 - `.workbuddy/skills/policy-city-onboarding/`：新增城市自动发现来源 Skill；
 - `.workbuddy/automations/policy-ai-sync.template.json`：全城市每日同步模板；
+- WorkBuddy HTTP 失败后的浏览器兜底协议：`/api/policies/browser-artifacts`；
 - `HANDOFF.md`：解压后的启动说明。
 
 交付包不会包含 `.env.local`、Vercel OIDC token、依赖目录、构建缓存、`.git` 或 WorkBuddy 私有 memory。令牌只能由接手方在本地环境配置，不能写入仓库或任务模板。
@@ -60,6 +61,8 @@ bash scripts/dev-all.sh
 并创建每日 08:00（Asia/Shanghai）的“UE-Agent 全城市政策同步”定时任务。该任务只需要创建一次，后续新增城市不需要新增任务。定时任务运行时应调用项目级 `policy-ai-crawler` Skill；没有政策来源的新城市先调用 `policy-city-onboarding`。
 
 WorkBuddy 的账号级定时任务记录不能随 Git 复制，接手方必须在自己的 WorkBuddy 账号中完成这一次创建。Skill 文件、定时任务内容、API 地址约定和所有政策数据规则已经在交付包中。
+其中固定 URL 遇到 JS/WAF、超时或 TLS 失败时，`policy-ai-crawler` 会按统一协议切换浏览器读取，
+回传正文并归档为 `workbuddy_browser` artifact；新增城市不需要增加代码或单独定时任务。
 
 ## 本地 API 与 WorkBuddy 网络边界
 

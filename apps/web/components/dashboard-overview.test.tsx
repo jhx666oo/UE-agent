@@ -64,7 +64,8 @@ const baseResponse: DashboardOverviewResponse = {
     activeSourceCount: 2,
     crawlCount: 4,
     suggestionCount: 2,
-    cities: [{ cityId: "changsha", cityName: "长沙", sourceCount: 2, activeSourceCount: 2, errorSourceCount: 0, crawlCount: 4, lastFetchedAt: "2026-09-08T00:00:00Z", suggestionCount: 2, projectId: "project-1" }],
+    fallbackRequiredCount: 1,
+    cities: [{ cityId: "changsha", cityName: "长沙", sourceCount: 2, activeSourceCount: 2, errorSourceCount: 0, fallbackRequiredCount: 1, crawlCount: 4, lastFetchedAt: "2026-09-08T00:00:00Z", suggestionCount: 2, projectId: "project-1" }],
     alerts: [{ type: "policy", severity: "info", cityId: "changsha", cityName: "长沙", message: "有政策文件待审核", href: "/policies/changsha" }],
   },
 };
@@ -85,6 +86,8 @@ describe("DashboardOverview", () => {
     expect(screen.getByText("政策资料同步")).toBeInTheDocument();
     expect(screen.getByText("已配置来源")).toBeInTheDocument();
     expect(screen.getAllByText("待采用建议值").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByText("需浏览器兜底")).toBeInTheDocument();
+    expect(screen.getAllByText("1 个").length).toBeGreaterThanOrEqual(1);
     expect(screen.getAllByText("2 个").length).toBeGreaterThanOrEqual(1);
     expect(screen.getByRole("link", { name: "查看政策资料" })).toHaveAttribute("href", "/policies");
   });
@@ -121,6 +124,7 @@ describe("DashboardOverview", () => {
       sourceCount: 1,
       activeSourceCount: 1,
       errorSourceCount: 0,
+      fallbackRequiredCount: 0,
       crawlCount: 3,
       lastFetchedAt: "2026-09-08T00:00:00Z",
       suggestionCount: 2,

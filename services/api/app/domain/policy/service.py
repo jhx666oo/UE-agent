@@ -5,9 +5,10 @@ import re
 from collections import defaultdict
 from pathlib import Path
 from typing import Any, Mapping, Sequence
+from urllib.parse import urlsplit
 
 from ...crawlers.runner import CrawlError, crawl_source, extract_readable_text
-from ...repository import ProjectRepository, new_id, utc_now
+from ...repository import LocalPolicyFileStore, ProjectRepository, new_id, utc_now
 
 
 ALLOWED_EXTENSIONS = {".doc", ".docx", ".xls", ".xlsx", ".pdf"}
@@ -17,11 +18,22 @@ MAX_UPLOAD_BYTES = 20 * 1024 * 1024
 class CrawlServiceError(Exception):
     """一键抓取失败；code 对应稳定 API 错误码。"""
 
-    def __init__(self, code: str, message: str, status_code: int):
+    def __init__(self, code: str, message: str, status_code: int, details: Mapping[str, Any] | None = None):
         super().__init__(message)
         self.code = code
         self.message = message
         self.status_code = status_code
+        self.details = dict(details or {})
+
+
+def crawl_error_details(error: CrawlError) -> dict[str, Any]:
+    """把底层抓取错误转成 Agent 和前端都能理解的稳定字段。"""
+    return {
+        "httpStatus": error.http_status,
+        "errorCode": error.error_code or "POLICY_SOURCE_FETCH_FAILED",
+        "fallbackAction": error.fallback_action,
+        "fallbackReason": error.fallback_reason,
+    }
 
 
 # PRD 11.10：可解析的政策字段 -> 关联的 Excel 参数编号。
@@ -203,13 +215,14 @@ class PolicyService:
                 allow_private=self.crawl_allow_private,
             )
         except CrawlError as error:
+            details = crawl_error_details(error)
             self.repository.create_crawl_artifact(
                 {
                     "sourceId": source_id,
                     "cityId": source["cityId"],
                     "requestedUrl": str(url).strip(),
                     "finalUrl": None,
-                    "httpStatus": None,
+                    "httpStatus": details["httpStatus"],
                     "contentType": None,
                     "contentLength": None,
                     "sha256": None,
@@ -218,10 +231,24 @@ class PolicyService:
                     "changeStatus": None,
                     "status": "failed",
                     "errorMessage": str(error),
+                    "fetchMode": "http",
+                    "errorCode": details["errorCode"],
+                    "fallbackAction": details["fallbackAction"],
+                    "fallbackReason": details["fallbackReason"],
                 }
             )
-            self.repository.update_data_source(source_id, {"status": "error"})
-            raise CrawlServiceError("POLICY_SOURCE_FETCH_FAILED", str(error), 502) from error
+            self.repository.update_data_source(
+                source_id,
+                {
+                    "status": "error",
+                    "lastHttpStatus": details["httpStatus"],
+                    "lastFetchMode": "http",
+                    "lastErrorCode": details["errorCode"],
+                    "lastFallbackAction": details["fallbackAction"],
+                    "lastFallbackReason": details["fallbackReason"],
+                },
+            )
+            raise CrawlServiceError("POLICY_SOURCE_FETCH_FAILED", str(error), 502, details) from error
 
         if previous_success is None:
             change_status = "first_fetch"
@@ -245,6 +272,10 @@ class PolicyService:
                 "changeStatus": change_status,
                 "status": "success",
                 "errorMessage": None,
+                "fetchMode": "http",
+                "errorCode": None,
+                "fallbackAction": None,
+                "fallbackReason": None,
             }
         )
         self.repository.update_data_source(
@@ -254,6 +285,10 @@ class PolicyService:
                 "lastFetchedAt": artifact["fetchedAt"],
                 "lastHttpStatus": result.http_status,
                 "lastChangeStatus": change_status,
+                "lastFetchMode": "http",
+                "lastErrorCode": None,
+                "lastFallbackAction": None,
+                "lastFallbackReason": None,
             },
         )
 
@@ -407,6 +442,7 @@ class PolicyService:
                     allow_private=self.crawl_allow_private,
                 )
             except CrawlError as error:
+                details = crawl_error_details(error)
                 if source_id and city_id:
                     self.repository.create_crawl_artifact(
                         {
@@ -414,7 +450,7 @@ class PolicyService:
                             "cityId": city_id,
                             "requestedUrl": url,
                             "finalUrl": None,
-                            "httpStatus": None,
+                            "httpStatus": details["httpStatus"],
                             "contentType": None,
                             "contentLength": None,
                             "sha256": None,
@@ -423,18 +459,25 @@ class PolicyService:
                             "changeStatus": None,
                             "status": "failed",
                             "errorMessage": str(error),
+                            "fetchMode": "http",
+                            "errorCode": details["errorCode"],
+                            "fallbackAction": details["fallbackAction"],
+                            "fallbackReason": details["fallbackReason"],
                             **({"researchRunId": research_run_id} if research_run_id else {}),
                         }
                     )
-                    self.repository.update_data_source(str(source_id), {"status": "error"})
-                results.append(
-                    {
-                        "url": url,
-                        "sourceId": source_id,
-                        "status": "failed",
-                        "errorMessage": str(error),
-                    }
-                )
+                    self.repository.update_data_source(
+                        str(source_id),
+                        {
+                            "status": "error",
+                            "lastHttpStatus": details["httpStatus"],
+                            "lastFetchMode": "http",
+                            "lastErrorCode": details["errorCode"],
+                            "lastFallbackAction": details["fallbackAction"],
+                            "lastFallbackReason": details["fallbackReason"],
+                        },
+                    )
+                results.append({"url": url, "sourceId": source_id, "status": "failed", "errorMessage": str(error), **details})
                 continue
 
             if previous_success is None:
@@ -457,6 +500,10 @@ class PolicyService:
                 "changeStatus": change_status,
                 "status": "success",
                 "errorMessage": None,
+                "fetchMode": "http",
+                "errorCode": None,
+                "fallbackAction": None,
+                "fallbackReason": None,
             }
             if source_id and city_id:
                 artifact_data = {"sourceId": str(source_id), "cityId": city_id, **artifact}
@@ -470,6 +517,10 @@ class PolicyService:
                         "lastFetchedAt": artifact["fetchedAt"],
                         "lastHttpStatus": result.http_status,
                         "lastChangeStatus": change_status,
+                        "lastFetchMode": "http",
+                        "lastErrorCode": None,
+                        "lastFallbackAction": None,
+                        "lastFallbackReason": None,
                     },
                 )
 
@@ -495,6 +546,115 @@ class PolicyService:
                 }
             )
         return results
+
+    def archive_browser_artifact(
+        self,
+        *,
+        city_id: str,
+        source_id: str,
+        research_run_id: str | None,
+        requested_url: str,
+        final_url: str | None,
+        title: str | None,
+        content: str,
+        content_type: str,
+        raw_dir: Path,
+    ) -> dict[str, Any]:
+        """归档 WorkBuddy 浏览器看到的官方正文，并恢复该来源的可用状态。
+
+        浏览器访问发生在 WorkBuddy 侧；API 只接收用户可复核的正文和 URL，做
+        URL 形态校验、哈希去重、原文落盘和来源状态更新，不信任浏览器回传的
+        任意 HTML/脚本或未经引用的字段值。
+        """
+        city = str(city_id or "").strip()
+        source_key = str(source_id or "").strip()
+        requested = str(requested_url or "").strip()
+        final = str(final_url or requested).strip()
+        body = str(content or "")
+        if not city or not source_key:
+            raise CrawlServiceError("INVALID_BROWSER_ARTIFACT", "cityId 和 sourceId 不能为空", 422)
+        if not body.strip():
+            raise CrawlServiceError("INVALID_BROWSER_ARTIFACT", "浏览器回传正文不能为空", 422)
+        if len(body) > 200000:
+            raise CrawlServiceError("INVALID_BROWSER_ARTIFACT", "浏览器回传正文不能超过 200000 个字符", 422)
+
+        def validate_url(value: str, field: str) -> None:
+            parsed = urlsplit(value)
+            if len(value) > 2000 or parsed.scheme not in {"http", "https"} or not parsed.hostname:
+                raise CrawlServiceError("INVALID_BROWSER_ARTIFACT", f"{field} 必须是公开的 http/https 链接", 422)
+            if parsed.username or parsed.password:
+                raise CrawlServiceError("INVALID_BROWSER_ARTIFACT", f"{field} 不能包含账号或密码", 422)
+
+        validate_url(requested, "requestedUrl")
+        validate_url(final, "finalUrl")
+
+        try:
+            source = next(
+                source for source in self.repository.list_data_sources(city_id=city)
+                if str(source.get("id")) == source_key
+            )
+        except StopIteration:
+            raise CrawlServiceError("NOT_FOUND", f"Data source not found: {source_key}", 404) from None
+
+        payload = body.encode("utf-8")
+        digest = hashlib.sha256(payload).hexdigest()
+        previous_success = next(
+            (
+                artifact
+                for artifact in reversed(self.repository.list_crawl_artifacts(source_id=source_key))
+                if artifact.get("status") == "success"
+            ),
+            None,
+        )
+        if previous_success and previous_success.get("sha256") == digest:
+            return {"artifact": previous_success, "idempotent": True}
+
+        change_status = (
+            "first_fetch"
+            if previous_success is None
+            else "new_version"
+        )
+        stored = LocalPolicyFileStore(raw_dir.parent).put(
+            f"raw_sources/{digest}.bin",
+            payload,
+            content_type=content_type or "text/plain; charset=utf-8",
+        )
+        artifact = self.repository.create_crawl_artifact(
+            {
+                "sourceId": source_key,
+                "cityId": city,
+                "requestedUrl": requested,
+                "finalUrl": final,
+                "httpStatus": None,
+                "contentType": content_type or "text/plain; charset=utf-8",
+                "contentLength": len(payload),
+                "sha256": digest,
+                "storedPath": stored["pathname"],
+                "title": str(title).strip() if title and str(title).strip() else None,
+                "changeStatus": change_status,
+                "status": "success",
+                "errorMessage": None,
+                "fetchMode": "workbuddy_browser",
+                "errorCode": None,
+                "fallbackAction": None,
+                "fallbackReason": None,
+                **({"researchRunId": research_run_id} if research_run_id else {}),
+            }
+        )
+        self.repository.update_data_source(
+            source_key,
+            {
+                "status": "active",
+                "lastFetchedAt": artifact["fetchedAt"],
+                "lastHttpStatus": None,
+                "lastChangeStatus": change_status,
+                "lastFetchMode": "workbuddy_browser",
+                "lastErrorCode": None,
+                "lastFallbackAction": None,
+                "lastFallbackReason": None,
+            },
+        )
+        return {"artifact": artifact, "idempotent": False}
 
     def upload_document(
         self,
@@ -631,6 +791,7 @@ class PolicyService:
         active_source_count = sum(int(city["activeSourceCount"]) for city in cities)
         crawl_count = sum(int(city["crawlCount"]) for city in cities)
         suggestion_count = sum(int(city["suggestionCount"]) for city in cities)
+        fallback_required_count = sum(int(city["fallbackRequiredCount"]) for city in cities)
         alerts = [
             {
                 "type": "policy",
@@ -657,6 +818,18 @@ class PolicyService:
         )
         alerts.extend(
             {
+                "type": "policy-browser-fallback",
+                "severity": "warning",
+                "cityId": city["cityId"],
+                "cityName": city["cityName"],
+                "message": f"有 {city['fallbackRequiredCount']} 个政策来源需要 WorkBuddy 浏览器兜底",
+                "href": f"/policies/{city['cityId']}",
+            }
+            for city in cities
+            if city["fallbackRequiredCount"]
+        )
+        alerts.extend(
+            {
                 "type": "policy-suggestion",
                 "severity": "info",
                 "cityId": city["cityId"],
@@ -675,6 +848,7 @@ class PolicyService:
             "activeSourceCount": active_source_count,
             "crawlCount": crawl_count,
             "suggestionCount": suggestion_count,
+            "fallbackRequiredCount": fallback_required_count,
             "alerts": alerts,
         }
 
@@ -721,6 +895,7 @@ class PolicyService:
             "sourceCount": summary["sourceCount"],
             "activeSourceCount": summary["activeSourceCount"],
             "errorSourceCount": summary["errorSourceCount"],
+            "fallbackRequiredCount": summary["fallbackRequiredCount"],
             "crawlCount": summary["crawlCount"],
             "lastFetchedAt": summary["lastFetchedAt"],
             "suggestionCount": summary["suggestionCount"],
@@ -749,11 +924,19 @@ class PolicyService:
         pending = [fact for fact in city_facts if fact.get("status") == "candidate"]
         active_source_count = sum(item.get("status") == "active" for item in city_sources)
         error_source_count = sum(item.get("status") == "error" for item in city_sources)
+        fallback_required_count = sum(
+            (item.get("fallbackAction") or item.get("lastFallbackAction")) == "browser_search"
+            for item in city_sources
+        )
         source_status = (
-            "active"
-            if active_source_count
+            "partial_failed"
+            if error_source_count and active_source_count
+            else "fallback_required"
+            if fallback_required_count
             else "error"
             if error_source_count
+            else "active"
+            if active_source_count
             else "paused"
             if city_sources
             else "missing"
@@ -771,6 +954,7 @@ class PolicyService:
             "sourceCount": len(city_sources),
             "activeSourceCount": active_source_count,
             "errorSourceCount": error_source_count,
+            "fallbackRequiredCount": fallback_required_count,
             "crawlCount": len(city_artifacts),
             "lastFetchedAt": max(
                 (str(item.get("fetchedAt")) for item in city_artifacts if item.get("fetchedAt")),

@@ -19,3 +19,6 @@
 WorkBuddy 的定时任务实体属于创建人的账号，包含账号 ID、工作区状态和本地权限，不适合写进 Git。仓库只保存不含账号信息的任务模板；Skill、执行步骤、调用接口和数据安全规则均随项目交付。
 
 WorkBuddy 必须在运行 UE-Agent API 的同一台机器上，或能够访问配置的 `apiBaseUrl`。本地模式默认是 `http://127.0.0.1:8000`。
+
+固定来源遇到 JS/WAF、超时或 TLS 失败时，任务按 `policy-ai-crawler` 的双通道协议改用浏览器读取，
+并将正文回传 `/api/policies/browser-artifacts`；因此新城市只需进入同一全城市任务。

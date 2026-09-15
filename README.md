@@ -89,7 +89,7 @@ WorkBuddy 的账号级定时任务不能随 Git 复制，但可按 `.workbuddy/a
 
 政策更新还支持按需实时检索：页面点击“AI 实时更新政策”，或在 WorkBuddy 对话中提出“更新长沙政策”，都会创建同一种 `research-runs` 任务。WorkBuddy 使用 brief 中带当前年份的查询词搜索最新官方文章、统计公报和 PDF，再通过 API 抓取原文、保存本地版本并回传带逐字引用的字段建议值。页面创建的任务会先显示 `queued` 和可复制任务提示，直到 WorkBuddy 实际执行；建议值仍需人工在城市测算页采用后才影响结果。
 
-实时检索接口包括 `POST/GET /api/policies/research-runs`、`GET /api/policies/research-runs/{runId}/brief`、`POST /api/policies/research-runs/{runId}/retry`、`POST /api/policies/research-runs/{runId}/results` 和 `POST /api/policies/research-runs/{runId}/complete`。具体执行顺序见 `.workbuddy/skills/policy-ai-crawler/SKILL.md`。
+实时检索接口包括 `POST/GET /api/policies/research-runs`、`GET /api/policies/research-runs/{runId}/brief`、`POST /api/policies/research-runs/{runId}/retry`、`POST /api/policies/research-runs/{runId}/results`、`POST /api/policies/browser-artifacts` 和 `POST /api/policies/research-runs/{runId}/complete`。HTTP 抓取受阻时由 WorkBuddy 浏览器回传官方正文并归档，具体执行顺序见 `.workbuddy/skills/policy-ai-crawler/SKILL.md`。
 
 验证 U1 模型与后端：
 

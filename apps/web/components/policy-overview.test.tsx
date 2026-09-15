@@ -15,6 +15,7 @@ const overview: PolicyOverviewResponse = {
       sourceCount: 1,
       activeSourceCount: 1,
       errorSourceCount: 0,
+      fallbackRequiredCount: 0,
       crawlCount: 4,
       lastFetchedAt: "2026-09-08T00:00:00Z",
       suggestionCount: 2,
@@ -32,6 +33,7 @@ const overview: PolicyOverviewResponse = {
   activeSourceCount: 1,
   crawlCount: 4,
   suggestionCount: 2,
+  fallbackRequiredCount: 0,
   alerts: [],
 };
 
@@ -42,6 +44,7 @@ const detail: PolicyCityDetailResponse = {
   sourceCount: 1,
   activeSourceCount: 1,
   errorSourceCount: 0,
+  fallbackRequiredCount: 0,
   crawlCount: 1,
   lastFetchedAt: "2026-09-08T00:00:00Z",
   suggestionCount: 2,
@@ -98,6 +101,29 @@ const artifacts: CrawlArtifact[] = [
 afterEach(() => cleanup());
 
 describe("policy center", () => {
+  it("surfaces browser fallback sources in the global overview", () => {
+    render(
+      <PolicyOverview
+        initialData={{
+          ...overview,
+          cities: [
+            {
+              ...overview.cities[0],
+              sourceStatus: "fallback_required",
+              errorSourceCount: 1,
+              activeSourceCount: 0,
+              fallbackRequiredCount: 1,
+            },
+          ],
+          fallbackRequiredCount: 1,
+        }}
+      />,
+    );
+
+    expect(screen.getByText("需浏览器通道")).toBeInTheDocument();
+    expect(screen.getByText("需浏览器兜底")).toBeInTheDocument();
+  });
+
   it("filters the global policy overview by city and shows crawler metrics", () => {
     const onCityChange = vi.fn();
     render(<PolicyOverview initialData={overview} onCityChange={onCityChange} />);

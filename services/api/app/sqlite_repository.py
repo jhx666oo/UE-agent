@@ -15,7 +15,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterator, Mapping
 
-from .repository import LocalPolicyFileStore, PolicyFileStore, new_id, utc_now
+from .repository import LocalPolicyFileStore, PolicyFileStore, enrich_legacy_crawl_artifact, new_id, utc_now
 
 DATA_ROOT = Path(__file__).resolve().parents[1] / "data"
 MIGRATIONS_DIR = Path(__file__).resolve().parents[1] / "migrations" / "sqlite"
@@ -29,6 +29,10 @@ SQLITE_SOURCE_KEYS = {
     "last_fetched_at": "lastFetchedAt",
     "last_http_status": "lastHttpStatus",
     "last_change_status": "lastChangeStatus",
+    "last_fetch_mode": "lastFetchMode",
+    "last_error_code": "lastErrorCode",
+    "last_fallback_action": "lastFallbackAction",
+    "last_fallback_reason": "lastFallbackReason",
 }
 
 # API 字段名 -> data_sources 列名（写入时使用；与 SQLITE_SOURCE_KEYS 互为反向）
@@ -188,13 +192,50 @@ class SqliteProjectRepository:
             "updatedAt": row["updated_at"],
         }
         # 抓取配置与最近抓取状态（003 迁移新增列；旧库可能尚未迁移）
-        for key in ("timeout_seconds", "max_bytes", "note", "last_fetched_at", "last_http_status", "last_change_status"):
+        for key in (
+            "timeout_seconds", "max_bytes", "note", "last_fetched_at", "last_http_status",
+            "last_change_status", "last_fetch_mode", "last_error_code", "last_fallback_action",
+            "last_fallback_reason",
+        ):
             try:
                 value = row[key]
             except (IndexError, KeyError):
                 value = None
             if value is not None:
                 source[SQLITE_SOURCE_KEYS[key]] = value
+        source["fallbackAction"] = source.get("lastFallbackAction")
+        source["fallbackReason"] = source.get("lastFallbackReason")
+        return source
+
+    def _apply_legacy_source_fallback(self, source: dict[str, Any]) -> dict[str, Any]:
+        """读取旧库时把 HTTP 412 失败记录映射成可操作的浏览器兜底状态。"""
+        if source.get("status") != "error" or source.get("fallbackAction"):
+            return source
+        with self._db() as connection:
+            row = connection.execute(
+                "SELECT status, error_message, http_status, fetch_mode, error_code, fallback_action, fallback_reason"
+                " FROM crawl_artifacts WHERE source_id = ? AND status = 'failed'"
+                " ORDER BY fetched_at DESC, id DESC LIMIT 1",
+                (source["id"],),
+            ).fetchone()
+        if row is None:
+            return source
+        artifact = enrich_legacy_crawl_artifact(
+            {
+                "status": row["status"],
+                "errorMessage": row["error_message"],
+                "httpStatus": row["http_status"],
+                "fetchMode": row["fetch_mode"],
+                "errorCode": row["error_code"],
+                "fallbackAction": row["fallback_action"],
+                "fallbackReason": row["fallback_reason"],
+            }
+        )
+        if artifact.get("fallbackAction"):
+            source["fallbackAction"] = artifact["fallbackAction"]
+            source["fallbackReason"] = artifact.get("fallbackReason")
+            source.setdefault("lastHttpStatus", artifact.get("httpStatus"))
+            source.setdefault("lastFetchMode", artifact.get("fetchMode"))
         return source
 
     @staticmethod
@@ -891,7 +932,7 @@ class SqliteProjectRepository:
             rows = connection.execute(
                 f"SELECT * FROM data_sources{where} ORDER BY updated_at DESC", params
             ).fetchall()
-        return [self._data_source_dict(row) for row in rows]
+        return [self._apply_legacy_source_fallback(self._data_source_dict(row)) for row in rows]
 
     def create_data_source(self, data: Mapping[str, Any]) -> dict[str, Any]:
         now = utc_now()
@@ -941,11 +982,15 @@ class SqliteProjectRepository:
                 "lastFetchedAt",
                 "lastHttpStatus",
                 "lastChangeStatus",
+                "lastFetchMode",
+                "lastErrorCode",
+                "lastFallbackAction",
+                "lastFallbackReason",
                 "timeoutSeconds",
                 "maxBytes",
                 "note",
             ):
-                if key in data and data[key] is not None:
+                if key in data and (data[key] is not None or key.startswith("last")):
                     # 数据库列是 snake_case，API 字段是 camelCase，拼列名前必须映射
                     column = SOURCE_COLUMN_BY_KEY.get(key, key)
                     connection.execute(
@@ -1367,6 +1412,10 @@ class SqliteProjectRepository:
             "status": row["status"],
             "errorMessage": row["error_message"],
             "researchRunId": row["research_run_id"],
+            "fetchMode": row["fetch_mode"],
+            "errorCode": row["error_code"],
+            "fallbackAction": row["fallback_action"],
+            "fallbackReason": row["fallback_reason"],
         }
 
     def list_crawl_artifacts(
@@ -1385,7 +1434,7 @@ class SqliteProjectRepository:
             rows = connection.execute(
                 f"SELECT * FROM crawl_artifacts{where} ORDER BY fetched_at ASC, id ASC", params
             ).fetchall()
-        return [self._artifact_dict(row) for row in rows]
+        return [enrich_legacy_crawl_artifact(self._artifact_dict(row)) for row in rows]
 
     def get_crawl_artifact(self, artifact_id: str) -> dict[str, Any]:
         with self._db() as connection:
@@ -1394,7 +1443,7 @@ class SqliteProjectRepository:
             ).fetchone()
         if row is None:
             raise KeyError(artifact_id)
-        return self._artifact_dict(row)
+        return enrich_legacy_crawl_artifact(self._artifact_dict(row))
 
     def create_crawl_artifact(self, data: Mapping[str, Any]) -> dict[str, Any]:
         artifact = dict(data)
@@ -1405,8 +1454,9 @@ class SqliteProjectRepository:
             connection.execute(
                 "INSERT INTO crawl_artifacts (id, source_id, city_id, requested_url, final_url, fetched_at,"
                 " http_status, content_type, content_length, sha256, stored_path, title, change_status,"
-                " status, error_message, research_run_id, created_at)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                " status, error_message, research_run_id, fetch_mode, error_code, fallback_action,"
+                " fallback_reason, created_at)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     artifact_id,
                     artifact["sourceId"],
@@ -1424,6 +1474,10 @@ class SqliteProjectRepository:
                     artifact.get("status", "success"),
                     artifact.get("errorMessage"),
                     artifact.get("researchRunId"),
+                    artifact.get("fetchMode"),
+                    artifact.get("errorCode"),
+                    artifact.get("fallbackAction"),
+                    artifact.get("fallbackReason"),
                     utc_now(),
                 ),
             )

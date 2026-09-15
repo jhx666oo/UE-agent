@@ -59,6 +59,7 @@ export type DashboardPolicyCitySummary = {
   sourceCount: number;
   activeSourceCount: number;
   errorSourceCount: number;
+  fallbackRequiredCount: number;
   crawlCount: number;
   lastFetchedAt: string | null;
   suggestionCount: number;
@@ -71,6 +72,7 @@ export type DashboardPolicySummary = {
   activeSourceCount: number;
   crawlCount: number;
   suggestionCount: number;
+  fallbackRequiredCount: number;
   cities: DashboardPolicyCitySummary[];
   alerts: DashboardAlert[];
 };

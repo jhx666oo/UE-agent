@@ -36,6 +36,8 @@ class DocumentationContractTests(unittest.TestCase):
         self.assertIn("当前年份", skill)
         self.assertIn("research-runs", skill)
         self.assertIn("queued", skill)
+        self.assertIn("browser-artifacts", skill)
+        self.assertIn("browser_search", skill)
 
     def test_portable_workbuddy_automation_is_global_and_account_neutral(self):
         skill = (REPO_ROOT / ".workbuddy/skills/policy-ai-crawler/SKILL.md").read_text(encoding="utf-8")
@@ -49,6 +51,8 @@ class DocumentationContractTests(unittest.TestCase):
         self.assertIn("policy-city-onboarding", skill)
         self.assertIn("不要覆盖", skill)
         self.assertIn("complete", skill)
+        self.assertIn("workbuddy_browser", skill)
+        self.assertIn("browser-artifacts", template)
         self.assertIn("FREQ=DAILY", template)
         self.assertIn("Asia/Shanghai", template)
         self.assertIn("policy-ai-crawler", template)

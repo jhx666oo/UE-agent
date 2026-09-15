@@ -171,6 +171,45 @@ curl -s -X POST "$BASE_URL/api/policies/fetch-requests" \
 
 **这一步就是成本闸门**：先把 `changeStatus` 过滤掉，再决定把哪些 `text` 送进推理。
 
+### HTTP 抓取失败时：浏览器通道兜底（所有城市统一适用）
+
+`fetch-requests` 仍然是第一入口。若某条结果是 `status: failed` 且
+`fallbackAction: "browser_search"`，说明 API 的纯 HTTP 通道遇到了 JS 挑战型 WAF、
+HTTP 拦截、超时或网络/TLS 限制。**不要反复请求同一个 URL，也不要用搜索摘要代替原文。**
+
+此时按下面顺序处理：
+
+1. 用 WorkBuddy 浏览器打开原 `url`；若页面被拦截，使用 brief 中的城市名、当前年份和字段族
+   搜索官方站点，优先同一政府部门的栏目页、具体文章或 PDF 镜像。必须确认页面属于官方域名，
+   记录浏览器最终看到的 URL 和页面标题。
+2. 将页面中可复核的正文原样回传到 API（正文可以是浏览器读取后的纯文本，不要加入模型解释）：
+
+```bash
+curl -s --noproxy '*' -X POST "$BASE_URL/api/policies/browser-artifacts" \
+  -H 'content-type: application/json' -H "x-ue-agent-token: $TOKEN" \
+  -d '{
+    "cityId":"XX市",
+    "sourceId":"source-xxx",
+    "researchRunId":"research-xxx",
+    "requestedUrl":"https://原来源链接",
+    "finalUrl":"https://浏览器实际打开的官方链接",
+    "title":"页面标题",
+    "content":"浏览器读取到的官方正文",
+    "contentType":"text/plain; charset=utf-8",
+    "fetchMode":"workbuddy_browser"
+  }'
+```
+
+3. 只有收到返回的 `artifact.artifactId` 后，才按正常 Step 3 抽取；抽取提交中的
+   `artifactId` 必须使用这个浏览器归档 ID，`quote` 必须逐字来自回传正文。相同正文重复提交
+   会返回 `idempotent: true`，继续复用原 artifact，不产生重复文件。
+4. 若浏览器也无法访问或找不到官方正文，保留 `fallbackAction` 失败状态，在
+   `complete.errors` 说明来源和原因，并把无法公开的字段放入 `notDisclosed`；禁止编造、估算、
+   拼接搜索摘要或把第三方转载当官方证据。
+
+浏览器回传与 HTTP 抓取使用同一套原文、SHA256、版本和建议值审计链路；因此它适用于旧城市、
+新增城市、自动入场和全城市定时任务，不需要为某个城市另写代码或另建任务。
+
 ### Step 3 · AI 抽取（本 skill 的核心智力活）
 
 只对 `first_fetch` / `new_version` 的 `text` 抽取。产出格式（每条 fact 的字段名必须**一字不差**）：
@@ -406,6 +445,7 @@ curl -s -X POST "$BASE_URL/api/policies/source-candidates/{candidateId}/reject" 
 | `fetch-requests` 返回 `skipped: 来源已停用` | DataSource `status=paused` | 提示用户先在页面启用该来源 |
 | `changeStatus` 全是 `unchanged` | 页面确实没更新 | 正常；本次无需抽取，汇总里说明即可 |
 | 抓取报「**无法连接目标官网，请检查链接是否可公开访问**」 | 大概率不是网络问题，而是**国密证书导致 SSL 握手被拒**（见下） | 把该来源 URL 从 `https://` 换成 `http://` 后重抓 |
+| 抓取报「**官网返回 HTTP 412，未保存内容**」 | **JS 挑战型 WAF**（实测 `*.chengdu.gov.cn` 全域，http/https、换 UA、加 Referer 都无效；返回的是要求计算 cookie 的混淆脚本） | 纯 HTTP 通道**无解**。不要反复重试；登记该域名为「需浏览器通道」，在 complete 的 `errors` 里如实说明，相关字段 notDisclosed 待通道升级后补抓 |
 
 ### 政务站抓不了的真正原因：国密证书（重要）
 
