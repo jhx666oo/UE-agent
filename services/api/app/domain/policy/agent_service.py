@@ -220,6 +220,7 @@ class AgentSubmissionService:
         submissions: Sequence[Mapping[str, Any]],
         agent_run_id: str | None = None,
         agent_version: str | None = None,
+        research_run_id: str | None = None,
     ) -> dict[str, Any]:
         """接收 WorkBuddy 的抽取结果，逐条校验后写入灰色建议值。"""
         if not city_id.strip():
@@ -320,6 +321,7 @@ class AgentSubmissionService:
                 "artifactId": submissions[0].get("artifactId"),
                 "agentRunId": agent_run_id,
                 "agentVersion": agent_version,
+                "researchRunId": research_run_id,
                 "payload": {
                     "submissions": [dict(item) for item in submissions],
                     "accepted": accepted,
@@ -472,7 +474,11 @@ class AgentSubmissionService:
     # ---------- 候选来源入池 ----------
 
     def submit_candidate_sources(
-        self, *, city_id: str, candidates: Sequence[Mapping[str, Any]]
+        self,
+        *,
+        city_id: str,
+        candidates: Sequence[Mapping[str, Any]],
+        research_run_id: str | None = None,
     ) -> dict[str, Any]:
         if not city_id.strip():
             raise SubmissionError("INVALID_INPUT", "cityId 不能为空", 400)
@@ -488,20 +494,22 @@ class AgentSubmissionService:
             if not url.startswith(("http://", "https://")):
                 skipped.append({"url": url, "reason": "仅接受 http/https 链接"})
                 continue
-            record = self.repository.create_candidate_source(
-                {
-                    "cityId": city_id,
-                    "url": url,
-                    "name": candidate.get("name") or candidate.get("title") or url,
-                    "domain": candidate.get("domain") or _domain_of(url),
-                    "title": candidate.get("title"),
-                    "publishedAt": candidate.get("publishedAt"),
-                    "summary": candidate.get("summary"),
-                    "targetFields": list(candidate.get("targetFields") or []),
-                    "relevance": candidate.get("relevance"),
-                    "origin": candidate.get("origin") or "ai_search",
-                }
-            )
+            candidate_data = {
+                "cityId": city_id,
+                "url": url,
+                "name": candidate.get("name") or candidate.get("title") or url,
+                "domain": candidate.get("domain") or _domain_of(url),
+                "title": candidate.get("title"),
+                "publishedAt": candidate.get("publishedAt"),
+                "summary": candidate.get("summary"),
+                "targetFields": list(candidate.get("targetFields") or []),
+                "relevance": candidate.get("relevance"),
+                "origin": candidate.get("origin") or "ai_search",
+            }
+            # 普通候选来源更新不能抹掉它原本属于哪一轮实时检索的关联。
+            if research_run_id:
+                candidate_data["researchRunId"] = research_run_id
+            record = self.repository.create_candidate_source(candidate_data)
             created.append(record)
         return {
             "createdCount": len(created),

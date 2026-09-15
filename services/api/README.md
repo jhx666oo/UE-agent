@@ -4,6 +4,9 @@
 
 当前已增加 FastAPI 适配层和本地 SQLite 项目、场景、政策来源及抓取记录存储。原有 `projects.json` 只用于首次 bootstrap 迁移或兼容测试。
 
+完整交付包由仓库根目录的 `pnpm handoff:package` 生成，包含源码、SQLite 备份、政策原文、WorkBuddy
+项目级 Skill 和全城市定时任务模板；账号级 WorkBuddy 定时任务不会写入仓库。
+
 首次运行建议在仓库根目录执行 `pnpm bootstrap`，创建本地数据目录、SQLite 表结构，并在数据库为空时导入既有项目样例。
 
 ## 运行模型测试
@@ -51,6 +54,9 @@ PYTHONPATH=services/api python3 -m unittest discover -s services/api/tests -p 't
 - `GET /api/policies/cities/{cityId}/source-freshness`：检查长期未变或疑似过期来源。
 - `GET /api/policies/artifacts/{artifactId}/content`：查看已保存的抓取原文。
 - `GET /api/policies/export`：导出来源、抓取记录和结构化建议值。
+- `POST/GET /api/policies/research-runs`：创建或查看按需实时政策检索任务；任务 brief 使用当前年份查询词。
+- `GET /api/policies/research-runs/{runId}/brief`：给 WorkBuddy 的城市、字段、历史来源和检索任务说明。
+- `POST /api/policies/research-runs/{runId}/results`、`POST /api/policies/research-runs/{runId}/complete`：回传候选来源/字段建议并结束任务。
 
 ## 城市自动入场
 
@@ -64,3 +70,9 @@ export UE_AGENT_DISCOVERY_SEARCH_URL='https://www.baidu.com/s?wd={query}'
 
 - `GET /api/projects/{projectId}/onboarding`：读取最新任务状态与统计。
 - `POST /api/projects/{projectId}/onboarding/retry`：重试失败或部分失败任务。
+
+### 按需实时政策检索
+
+“实时”指用户触发后由 WorkBuddy 联网搜索当前年份的政策信息，不承诺 24 小时监听。WorkBuddy 先创建或复用一个城市 research run，再读取 `/brief`，使用动态查询词寻找最新的具体官方文章、统计公报或 PDF；原文必须交给 `/fetch-requests` 由 API 下载、落盘和计算 SHA256，抽取结果通过 `/extraction-submissions` 或 `/research-runs/{runId}/results` 回传。`C6/C7/C8` 只能登记 `notDisclosed`，所有建议值都保持灰色，人工采用后才进入城市参数。
+
+前端按钮创建的任务默认状态是 `queued`，这表示等待 WorkBuddy 执行，不代表检索已完成。若当前环境没有可调用 WorkBuddy 的桥接器，页面会提供可复制任务提示；在 WorkBuddy 对话中直接说“更新某城市政策”即可执行同一任务协议。回传接口在配置 `UE_AGENT_AGENT_TOKEN` 后必须携带 token。

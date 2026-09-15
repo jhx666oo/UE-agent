@@ -339,7 +339,12 @@ class PolicyService:
         return artifact
 
     def fetch_for_agent(
-        self, *, requests: Sequence[Mapping[str, Any]], raw_dir: Path, max_chars: int = 40000
+        self,
+        *,
+        requests: Sequence[Mapping[str, Any]],
+        raw_dir: Path,
+        max_chars: int = 40000,
+        research_run_id: str | None = None,
     ) -> list[dict[str, Any]]:
         """为 WorkBuddy 抓取正文（WorkBuddy 驱动架构，见设计文档 8.4）。
 
@@ -418,6 +423,7 @@ class PolicyService:
                             "changeStatus": None,
                             "status": "failed",
                             "errorMessage": str(error),
+                            **({"researchRunId": research_run_id} if research_run_id else {}),
                         }
                     )
                     self.repository.update_data_source(str(source_id), {"status": "error"})
@@ -453,9 +459,10 @@ class PolicyService:
                 "errorMessage": None,
             }
             if source_id and city_id:
-                artifact = self.repository.create_crawl_artifact(
-                    {"sourceId": str(source_id), "cityId": city_id, **artifact}
-                )
+                artifact_data = {"sourceId": str(source_id), "cityId": city_id, **artifact}
+                if research_run_id:
+                    artifact_data["researchRunId"] = research_run_id
+                artifact = self.repository.create_crawl_artifact(artifact_data)
                 self.repository.update_data_source(
                     str(source_id),
                     {

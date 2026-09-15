@@ -7,6 +7,7 @@ import { Card, CardContent } from "@ue-agent/ui/components/card";
 import { Skeleton } from "@ue-agent/ui/components/skeleton";
 import { PageHeader } from "@/components/page-header";
 import { PolicyCityDetail } from "@/components/policy-city-detail";
+import { PolicyResearchRunCard } from "@/components/policy-research-run-card";
 import {
   PolicyCrawlStatusSection,
   PolicyExtractionResultSection,
@@ -20,6 +21,7 @@ import {
   getPolicyCityDetail,
   getSourceFreshness,
   listExtractionSubmissions,
+  listPolicyResearchRuns,
   listPolicySources,
   listSourceArtifacts,
   listSourceCandidates,
@@ -31,6 +33,7 @@ import {
   type DataSource,
   type ExtractionSubmissionRecord,
   type PolicyCityDetailResponse,
+  type PolicyResearchRun,
   type SourceCandidate,
   type SourceFreshnessReport,
 } from "@/lib/policies";
@@ -45,6 +48,7 @@ export default function PolicyCityPage() {
   const [candidates, setCandidates] = useState<SourceCandidate[]>([]);
   const [submissions, setSubmissions] = useState<ExtractionSubmissionRecord[]>([]);
   const [freshness, setFreshness] = useState<SourceFreshnessReport | undefined>();
+  const [researchRun, setResearchRun] = useState<PolicyResearchRun | null>(null);
   const [aiLoading, setAiLoading] = useState(true);
   const [aiError, setAiError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -87,6 +91,15 @@ export default function PolicyCityPage() {
     setAiLoading(false);
   }, [cityId]);
 
+  const loadLatestResearchRun = useCallback(async () => {
+    try {
+      const runs = await listPolicyResearchRuns(cityId, 1);
+      setResearchRun(runs[0] ?? null);
+    } catch {
+      // 实时检索卡片本身仍可创建任务；历史任务读取失败不应阻断政策页。
+    }
+  }, [cityId]);
+
   useEffect(() => {
     let active = true;
     Promise.all([getPolicyCityDetail(cityId), listPolicySources(cityId)])
@@ -102,6 +115,20 @@ export default function PolicyCityPage() {
       })
       .finally(() => {
         if (active) setLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [cityId]);
+
+  useEffect(() => {
+    let active = true;
+    listPolicyResearchRuns(cityId, 1)
+      .then((runs) => {
+        if (active) setResearchRun(runs[0] ?? null);
+      })
+      .catch(() => {
+        // 实时检索卡片本身仍可创建任务；历史任务读取失败不应阻断政策页。
       });
     return () => {
       active = false;
@@ -146,6 +173,10 @@ export default function PolicyCityPage() {
     setAiLoading(true);
     await loadAiSections();
   }, [loadAiSections]);
+
+  const handleResearchSettled = useCallback(() => {
+    void Promise.all([loadLatestResearchRun(), loadAiSections(), load()]);
+  }, [load, loadAiSections, loadLatestResearchRun]);
 
   async function handleCreateSource(input: { name: string; url: string }) {
     await createPolicySource({ cityId, name: input.name, url: input.url });
@@ -205,6 +236,13 @@ export default function PolicyCityPage() {
   if (!data) return null;
   return (
     <div className="space-y-5">
+      <PolicyResearchRunCard
+        key={researchRun?.id ?? "no-research-run"}
+        cityId={cityId}
+        cityName={data.cityName}
+        initialRun={researchRun}
+        onSettled={handleResearchSettled}
+      />
       <PolicyCrawlStatusSection
         targets={targets}
         submissions={submissions}

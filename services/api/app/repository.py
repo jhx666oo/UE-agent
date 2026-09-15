@@ -30,6 +30,8 @@ def empty_store_payload() -> dict[str, Any]:
         "fieldValueHistory": [],
         "crawlArtifacts": [],
         "onboardingJobs": [],
+        "policyResearchRuns": [],
+        "policyResearchQueries": [],
     }
 
 
@@ -45,6 +47,8 @@ def normalize_store_payload(payload: Any) -> dict[str, Any]:
         "fieldValueHistory",
         "crawlArtifacts",
         "onboardingJobs",
+        "policyResearchRuns",
+        "policyResearchQueries",
     ):
         if not isinstance(payload.get(collection, []), list):
             raise ValueError(f"Invalid {collection} store")
@@ -178,6 +182,25 @@ class ProjectRepository(Protocol):
     def list_onboarding_jobs(self, project_id: str | None = None) -> list[dict[str, Any]]: ...
 
     def update_onboarding_job(self, job_id: str, data: Mapping[str, Any]) -> dict[str, Any]: ...
+
+    # ---------- 政策实时检索任务 ----------
+    def create_research_run(self, data: Mapping[str, Any]) -> dict[str, Any]: ...
+
+    def get_research_run(self, run_id: str) -> dict[str, Any]: ...
+
+    def get_active_research_run(self, city_id: str) -> dict[str, Any] | None: ...
+
+    def list_research_runs(
+        self, city_id: str | None = None, limit: int | None = None
+    ) -> list[dict[str, Any]]: ...
+
+    def update_research_run(self, run_id: str, data: Mapping[str, Any]) -> dict[str, Any]: ...
+
+    def create_research_query(self, data: Mapping[str, Any]) -> dict[str, Any]: ...
+
+    def list_research_queries(self, run_id: str) -> list[dict[str, Any]]: ...
+
+    def update_research_query(self, query_id: str, data: Mapping[str, Any]) -> dict[str, Any]: ...
 
 
 class LocalPolicyFileStore:
@@ -400,6 +423,131 @@ class JsonProjectRepository:
         job["updatedAt"] = utc_now()
         self._write(payload)
         return copy.deepcopy(job)
+
+    def create_research_run(self, data: Mapping[str, Any]) -> dict[str, Any]:
+        active_statuses = {"queued", "researching", "fetching", "extracting", "awaiting_review"}
+        payload = self._read()
+        active = [
+            run
+            for run in payload.get("policyResearchRuns", [])
+            if run.get("cityId") == data.get("cityId") and run.get("status") in active_statuses
+        ]
+        if active:
+            return copy.deepcopy(max(active, key=lambda item: str(item.get("updatedAt") or "")))
+        now = utc_now()
+        run = {
+            "id": str(data.get("id") or new_id("research")),
+            "cityId": str(data["cityId"]),
+            "projectId": data.get("projectId"),
+            "trigger": str(data.get("trigger") or "ui"),
+            "scope": str(data.get("scope") or "all"),
+            "fields": copy.deepcopy(list(data.get("fields") or [])),
+            "status": str(data.get("status") or "queued"),
+            "phase": str(data.get("phase") or "queued"),
+            "agentRunId": data.get("agentRunId"),
+            "agentVersion": data.get("agentVersion"),
+            "queryCount": int(data.get("queryCount") or 0),
+            "sourceCount": int(data.get("sourceCount") or 0),
+            "newSourceCount": int(data.get("newSourceCount") or 0),
+            "changedSourceCount": int(data.get("changedSourceCount") or 0),
+            "fetchedCount": int(data.get("fetchedCount") or 0),
+            "suggestionCount": int(data.get("suggestionCount") or 0),
+            "errorCount": int(data.get("errorCount") or 0),
+            "errors": copy.deepcopy(list(data.get("errors") or [])),
+            "taskPrompt": data.get("taskPrompt"),
+            "requestedAt": data.get("requestedAt") or now,
+            "startedAt": data.get("startedAt"),
+            "finishedAt": data.get("finishedAt"),
+            "createdAt": now,
+            "updatedAt": now,
+        }
+        payload.setdefault("policyResearchRuns", []).append(run)
+        self._write(payload)
+        return copy.deepcopy(run)
+
+    def get_research_run(self, run_id: str) -> dict[str, Any]:
+        for run in self._read().get("policyResearchRuns", []):
+            if run.get("id") == run_id:
+                return copy.deepcopy(run)
+        raise KeyError(run_id)
+
+    def get_active_research_run(self, city_id: str) -> dict[str, Any] | None:
+        active_statuses = {"queued", "researching", "fetching", "extracting", "awaiting_review"}
+        runs = [
+            run
+            for run in self._read().get("policyResearchRuns", [])
+            if run.get("cityId") == city_id and run.get("status") in active_statuses
+        ]
+        if not runs:
+            return None
+        return copy.deepcopy(max(runs, key=lambda item: str(item.get("updatedAt") or "")))
+
+    def list_research_runs(
+        self, city_id: str | None = None, limit: int | None = None
+    ) -> list[dict[str, Any]]:
+        runs = [
+            copy.deepcopy(run)
+            for run in self._read().get("policyResearchRuns", [])
+            if city_id is None or run.get("cityId") == city_id
+        ]
+        runs.sort(key=lambda item: str(item.get("updatedAt") or ""), reverse=True)
+        return runs[:limit] if limit else runs
+
+    def update_research_run(self, run_id: str, data: Mapping[str, Any]) -> dict[str, Any]:
+        payload = self._read()
+        run = next((item for item in payload.get("policyResearchRuns", []) if item.get("id") == run_id), None)
+        if run is None:
+            raise KeyError(run_id)
+        allowed = {
+            "projectId", "trigger", "scope", "fields", "status", "phase", "agentRunId", "agentVersion",
+            "queryCount", "sourceCount", "newSourceCount", "changedSourceCount", "fetchedCount",
+            "suggestionCount", "errorCount", "errors", "taskPrompt", "requestedAt", "startedAt", "finishedAt",
+        }
+        for key in allowed:
+            if key in data:
+                run[key] = copy.deepcopy(data[key])
+        run["updatedAt"] = utc_now()
+        self._write(payload)
+        return copy.deepcopy(run)
+
+    def create_research_query(self, data: Mapping[str, Any]) -> dict[str, Any]:
+        now = utc_now()
+        query = {
+            "id": str(data.get("id") or new_id("research-query")),
+            "runId": str(data["runId"]),
+            "family": str(data["family"]),
+            "query": str(data["query"]),
+            "status": str(data.get("status") or "queued"),
+            "resultCount": int(data.get("resultCount") or 0),
+            "errorMessage": data.get("errorMessage"),
+            "searchedAt": data.get("searchedAt"),
+            "createdAt": now,
+        }
+        payload = self._read()
+        payload.setdefault("policyResearchQueries", []).append(query)
+        self._write(payload)
+        return copy.deepcopy(query)
+
+    def list_research_queries(self, run_id: str) -> list[dict[str, Any]]:
+        queries = [
+            copy.deepcopy(query)
+            for query in self._read().get("policyResearchQueries", [])
+            if query.get("runId") == run_id
+        ]
+        return sorted(queries, key=lambda item: str(item.get("createdAt") or ""))
+
+    def update_research_query(self, query_id: str, data: Mapping[str, Any]) -> dict[str, Any]:
+        payload = self._read()
+        query = next(
+            (item for item in payload.get("policyResearchQueries", []) if item.get("id") == query_id), None
+        )
+        if query is None:
+            raise KeyError(query_id)
+        for key in ("status", "resultCount", "errorMessage", "searchedAt"):
+            if key in data:
+                query[key] = copy.deepcopy(data[key])
+        self._write(payload)
+        return copy.deepcopy(query)
 
     def delete_project(self, project_id: str) -> None:
         payload = self._read()
@@ -886,7 +1034,15 @@ class JsonProjectRepository:
                 # 保留既有 id / status / createdAt，只更新来源元数据。
                 preserved = {
                     key: existing.get(key)
-                    for key in ("id", "status", "createdAt", "promotedSourceId", "reviewedBy", "reviewedAt")
+                    for key in (
+                        "id",
+                        "status",
+                        "createdAt",
+                        "promotedSourceId",
+                        "reviewedBy",
+                        "reviewedAt",
+                        "researchRunId",
+                    )
                 }
                 existing.update(incoming)
                 existing.update({k: v for k, v in preserved.items() if v is not None})

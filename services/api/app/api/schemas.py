@@ -128,6 +128,7 @@ class FetchRequestBatch(BaseModel):
 
     requests: list[FetchRequestItem] = Field(min_length=1, max_length=50)
     maxChars: int | None = Field(default=None, ge=1000, le=200000)
+    researchRunId: str | None = Field(default=None, max_length=120)
 
 
 class ExtractionFact(BaseModel):
@@ -159,6 +160,7 @@ class ExtractionSubmissionRequest(BaseModel):
     cityId: str = Field(min_length=1, max_length=80)
     agentRunId: str | None = Field(default=None, max_length=120)
     agentVersion: str | None = Field(default=None, max_length=60)
+    researchRunId: str | None = Field(default=None, max_length=120)
     submissions: list[ExtractionSubmissionItem] = Field(min_length=1, max_length=50)
 
 
@@ -180,6 +182,7 @@ class SourceCandidateBatch(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     cityId: str = Field(min_length=1, max_length=80)
+    researchRunId: str | None = Field(default=None, max_length=120)
     candidates: list[SourceCandidateInput] = Field(min_length=1, max_length=100)
 
 
@@ -187,3 +190,35 @@ class SourceCandidateReject(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     reason: str | None = Field(default=None, max_length=500)
+
+
+class ResearchRunCreate(BaseModel):
+    """创建一次按需实时政策检索。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    cityId: str = Field(min_length=1, max_length=80)
+    projectId: str | None = Field(default=None, max_length=120)
+    trigger: Literal["ui", "workbuddy"] = "ui"
+    scope: Literal["all", "policy", "population", "space"] = "all"
+    fields: list[str] = Field(default_factory=list, max_length=30)
+
+
+class ResearchRunCompleteRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    status: Literal["completed", "partial_failed", "failed"]
+    agentRunId: str | None = Field(default=None, max_length=120)
+    agentVersion: str | None = Field(default=None, max_length=80)
+    errors: list[str] = Field(default_factory=list, max_length=100)
+
+
+class ResearchRunResultRequest(BaseModel):
+    """WorkBuddy 回传本次任务的候选来源和已由 API 抓取的抽取结果。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    agentRunId: str | None = Field(default=None, max_length=120)
+    agentVersion: str | None = Field(default=None, max_length=80)
+    candidates: list[SourceCandidateInput] = Field(default_factory=list, max_length=100)
+    submissions: list[ExtractionSubmissionItem] = Field(default_factory=list, max_length=50)

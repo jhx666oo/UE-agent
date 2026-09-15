@@ -31,6 +31,7 @@ from ..domain.dashboard.aggregator import build_dashboard_overview
 from ..domain.policy.agent_service import AgentSubmissionService, SubmissionError
 from ..domain.policy.discovery import city_id_from_name
 from ..domain.policy.onboarding_service import CityOnboardingService
+from ..domain.policy.research_service import PolicyResearchService
 from ..domain.policy.service import CrawlServiceError, PolicyService
 from ..repository import ProjectRepository
 from .schemas import (
@@ -45,6 +46,9 @@ from .schemas import (
     ScenarioUpdate,
     SourceCandidateBatch,
     SourceCandidateReject,
+    ResearchRunCompleteRequest,
+    ResearchRunCreate,
+    ResearchRunResultRequest,
 )
 
 
@@ -560,6 +564,167 @@ def _agent_service(request: Request) -> AgentSubmissionService:
     return AgentSubmissionService(repository_from_request(request))
 
 
+def _research_service(request: Request) -> PolicyResearchService:
+    return PolicyResearchService(repository_from_request(request), load_parameter_catalog())
+
+
+@router.post("/policies/research-runs", response_model=None)
+def create_policy_research_run(payload: ResearchRunCreate, request: Request) -> JSONResponse:
+    """创建一次按需实时政策检索；重复点击同一城市会复用 active run。"""
+    repository = repository_from_request(request)
+    if payload.projectId:
+        try:
+            project = repository.get_project(payload.projectId)
+        except KeyError:
+            return error_payload("NOT_FOUND", f"Project not found: {payload.projectId}")
+        project_city_id = str(project.get("cityId") or project.get("city") or "")
+        if project_city_id and project_city_id != payload.cityId:
+            return JSONResponse(
+                status_code=400,
+                content={"error": {"code": "CITY_PROJECT_MISMATCH", "message": "项目与城市不匹配"}},
+            )
+    existing = repository.get_active_research_run(payload.cityId)
+    try:
+        run = _research_service(request).create_run(
+            city_id=payload.cityId,
+            project_id=payload.projectId,
+            trigger=payload.trigger,
+            scope=payload.scope,
+            fields=payload.fields,
+        )
+    except ValueError as error:
+        return JSONResponse(
+            status_code=422,
+            content={"error": {"code": str(error), "message": str(error)}},
+        )
+    return JSONResponse(status_code=200 if existing is not None else 201, content=run)
+
+
+@router.get("/policies/research-runs", response_model=None)
+def list_policy_research_runs(
+    request: Request, cityId: str | None = None, limit: int = 20
+) -> list[dict[str, Any]] | JSONResponse:
+    if limit < 1 or limit > 100:
+        return JSONResponse(
+            status_code=422,
+            content={"error": {"code": "INVALID_LIMIT", "message": "limit 必须在 1 到 100 之间"}},
+        )
+    return repository_from_request(request).list_research_runs(city_id=cityId, limit=limit)
+
+
+@router.get("/policies/research-runs/{run_id}", response_model=None)
+def get_policy_research_run(run_id: str, request: Request) -> dict[str, Any] | JSONResponse:
+    try:
+        return _research_service(request).get_run(run_id)
+    except KeyError:
+        return error_payload("NOT_FOUND", f"政策检索任务不存在：{run_id}")
+
+
+@router.get("/policies/research-runs/{run_id}/brief", response_model=None)
+def get_policy_research_brief(run_id: str, request: Request) -> dict[str, Any] | JSONResponse:
+    try:
+        return _research_service(request).build_brief(run_id)
+    except KeyError:
+        return error_payload("NOT_FOUND", f"政策检索任务不存在：{run_id}")
+
+
+@router.post("/policies/research-runs/{run_id}/retry", response_model=None)
+def retry_policy_research_run(run_id: str, request: Request) -> dict[str, Any] | JSONResponse:
+    try:
+        return _research_service(request).retry(run_id)
+    except KeyError:
+        return error_payload("NOT_FOUND", f"政策检索任务不存在：{run_id}")
+    except ValueError as error:
+        return JSONResponse(
+            status_code=409,
+            content={"error": {"code": str(error), "message": str(error)}},
+        )
+
+
+@router.post("/policies/research-runs/{run_id}/complete", response_model=None)
+def complete_policy_research_run(
+    run_id: str, payload: ResearchRunCompleteRequest, request: Request
+) -> dict[str, Any] | JSONResponse:
+    unauthorized = _agent_token_required(request)
+    if unauthorized is not None:
+        return unauthorized
+    try:
+        return _research_service(request).complete(
+            run_id,
+            status=payload.status,
+            agent_run_id=payload.agentRunId,
+            agent_version=payload.agentVersion,
+            errors=payload.errors,
+        )
+    except KeyError:
+        return error_payload("NOT_FOUND", f"政策检索任务不存在：{run_id}")
+    except ValueError as error:
+        return JSONResponse(
+            status_code=409,
+            content={"error": {"code": str(error), "message": str(error)}},
+        )
+
+
+@router.post("/policies/research-runs/{run_id}/results", response_model=None)
+def submit_policy_research_results(
+    run_id: str, payload: ResearchRunResultRequest, request: Request
+) -> dict[str, Any] | JSONResponse:
+    """接收 WorkBuddy 发现的来源和抽取结果，复用既有确定性校验链路。"""
+    unauthorized = _agent_token_required(request)
+    if unauthorized is not None:
+        return unauthorized
+    service = _research_service(request)
+    try:
+        run = service.get_run(run_id)
+    except KeyError:
+        return error_payload("NOT_FOUND", f"政策检索任务不存在：{run_id}")
+    if not payload.candidates and not payload.submissions:
+        return JSONResponse(
+            status_code=422,
+            content={"error": {"code": "EMPTY_RESEARCH_RESULTS", "message": "候选来源和抽取结果不能同时为空"}},
+        )
+    if run.get("status") == "awaiting_review" and payload.agentRunId and run.get("agentRunId") == payload.agentRunId:
+        return {"run": run, "candidateResult": {"createdCount": 0, "skippedCount": 0}, "extractionResult": None, "idempotent": True}
+    candidate_result: dict[str, Any] = {"createdCount": 0, "skippedCount": 0, "created": [], "skipped": []}
+    extraction_result: dict[str, Any] | None = None
+    try:
+        if payload.candidates:
+            candidate_result = _agent_service(request).submit_candidate_sources(
+                city_id=str(run["cityId"]),
+                candidates=[item.model_dump() for item in payload.candidates],
+                research_run_id=run_id,
+            )
+        if payload.submissions:
+            extraction_result = _agent_service(request).submit_extraction(
+                city_id=str(run["cityId"]),
+                catalog=load_parameter_catalog(),
+                submissions=[item.model_dump() for item in payload.submissions],
+                agent_run_id=payload.agentRunId,
+                agent_version=payload.agentVersion,
+                research_run_id=run_id,
+            )
+        updated = service.record_results(
+            run_id,
+            agent_run_id=payload.agentRunId,
+            agent_version=payload.agentVersion,
+            source_count=len(payload.candidates),
+            new_source_count=int(candidate_result.get("createdCount") or 0),
+            fetched_count=sum(1 for item in payload.submissions if item.artifactId),
+            suggestion_count=int((extraction_result or {}).get("acceptedCount") or 0),
+        )
+    except SubmissionError as error:
+        return JSONResponse(
+            status_code=error.status_code,
+            content={"error": {"code": error.code, "message": error.message}},
+        )
+    except ValueError as error:
+        return JSONResponse(
+            status_code=409,
+            content={"error": {"code": str(error), "message": str(error)}},
+        )
+    return {"run": updated, "candidateResult": candidate_result, "extractionResult": extraction_result}
+
+
 @router.get("/policies/crawl-targets", response_model=None)
 def policy_crawl_targets(request: Request) -> dict[str, Any]:
     """派活：给 WorkBuddy 的待办清单（已配置来源 + 增量感知的待填字段）。"""
@@ -576,13 +741,39 @@ def policy_fetch_requests(payload: FetchRequestBatch, request: Request) -> dict[
     unauthorized = _agent_token_required(request)
     if unauthorized is not None:
         return unauthorized
+    research_service = _research_service(request) if payload.researchRunId else None
+    if research_service is not None:
+        try:
+            run = research_service.get_run(payload.researchRunId or "")
+        except KeyError:
+            return error_payload("NOT_FOUND", f"政策检索任务不存在：{payload.researchRunId}")
+        requested_cities = {item.cityId for item in payload.requests if item.cityId}
+        if requested_cities and requested_cities != {str(run["cityId"])}:
+            return JSONResponse(
+                status_code=400,
+                content={"error": {"code": "CITY_RESEARCH_RUN_MISMATCH", "message": "抓取城市与检索任务不匹配"}},
+            )
+        research_service.mark_progress(
+            payload.researchRunId,
+            status="fetching",
+            phase="fetching",
+        )
     service = PolicyService(repository_from_request(request))
     service.crawl_allow_private = _crawl_allow_private(request)
     results = service.fetch_for_agent(
         requests=[item.model_dump() for item in payload.requests],
         raw_dir=_raw_sources_dir(request),
         max_chars=payload.maxChars or 40000,
+        research_run_id=payload.researchRunId,
     )
+    if research_service is not None:
+        research_service.mark_progress(
+            payload.researchRunId or "",
+            status="extracting",
+            phase="extracting",
+            fetched_count=sum(1 for item in results if item.get("status") == "success"),
+            changed_source_count=sum(1 for item in results if item.get("changeStatus") == "new_version"),
+        )
     return {
         "fetchedAt": datetime.now(timezone.utc).isoformat(),
         "requested": len(payload.requests),
@@ -601,14 +792,41 @@ def policy_extraction_submissions(
     unauthorized = _agent_token_required(request)
     if unauthorized is not None:
         return unauthorized
+    research_service = _research_service(request) if payload.researchRunId else None
+    if research_service is not None:
+        try:
+            run = research_service.get_run(payload.researchRunId or "")
+        except KeyError:
+            return error_payload("NOT_FOUND", f"政策检索任务不存在：{payload.researchRunId}")
+        if str(run["cityId"]) != payload.cityId:
+            return JSONResponse(
+                status_code=400,
+                content={"error": {"code": "CITY_RESEARCH_RUN_MISMATCH", "message": "抽取城市与检索任务不匹配"}},
+            )
+        research_service.mark_progress(
+            payload.researchRunId,
+            status="extracting",
+            phase="extracting",
+            agent_run_id=payload.agentRunId,
+            agent_version=payload.agentVersion,
+        )
     try:
-        return _agent_service(request).submit_extraction(
+        result = _agent_service(request).submit_extraction(
             city_id=payload.cityId,
             catalog=load_parameter_catalog(),
             submissions=[item.model_dump() for item in payload.submissions],
             agent_run_id=payload.agentRunId,
             agent_version=payload.agentVersion,
+            research_run_id=payload.researchRunId,
         )
+        if research_service is not None:
+            research_service.record_results(
+                payload.researchRunId or "",
+                agent_run_id=payload.agentRunId,
+                agent_version=payload.agentVersion,
+                suggestion_count=int(result.get("acceptedCount") or 0),
+            )
+        return result
     except SubmissionError as error:
         return JSONResponse(
             status_code=error.status_code,
@@ -624,10 +842,21 @@ def create_source_candidates(
     unauthorized = _agent_token_required(request)
     if unauthorized is not None:
         return unauthorized
+    if payload.researchRunId:
+        try:
+            run = _research_service(request).get_run(payload.researchRunId)
+        except KeyError:
+            return error_payload("NOT_FOUND", f"政策检索任务不存在：{payload.researchRunId}")
+        if str(run["cityId"]) != payload.cityId:
+            return JSONResponse(
+                status_code=400,
+                content={"error": {"code": "CITY_RESEARCH_RUN_MISMATCH", "message": "来源城市与检索任务不匹配"}},
+            )
     try:
         return _agent_service(request).submit_candidate_sources(
             city_id=payload.cityId,
             candidates=[item.model_dump() for item in payload.candidates],
+            research_run_id=payload.researchRunId,
         )
     except SubmissionError as error:
         return JSONResponse(

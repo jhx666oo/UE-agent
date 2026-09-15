@@ -1,10 +1,35 @@
 ---
 name: policy-ai-crawler
-description: "养老业务政策资料 AI 抓取与字段抽取。WorkBuddy 承担联网检索、网页理解、20 个自动爬虫字段的抽取，通过 HTTP 接口把结果回传给 UE Agent API 落库。收到「政策抓取」「政策爬取」「更新城市参数」「跑一次 AI 抓取」「长护险政策抽取」等请求时触发，也由每 3 天的 automation 定时唤起。"
+description: "养老业务政策资料 AI 抓取与字段抽取。WorkBuddy 承担联网检索、网页理解、20 个自动爬虫字段的抽取，通过 HTTP 接口把结果回传给 UE Agent API 落库。收到「政策抓取」「政策爬取」「更新城市参数」「更新某城市政策」「跑一次 AI 抓取」「长护险政策抽取」等请求时触发。"
 metadata: {"workbuddy":{"emoji":"🏛️","agent_created":true,"requires":{"commands":["curl","python3"]}}}
 ---
 
 # 政策资料 AI 抓取与字段抽取（WorkBuddy 执行手册）
+
+## 定时任务模式：全城市同步
+
+当触发词是“全城市政策同步”“运行 UE-Agent 政策定时任务”或来自
+`.workbuddy/automations/policy-ai-sync.template.json` 的定时任务时，执行全局编排，
+不要要求业务人员逐城复制提示词：
+
+1. 用 `BASE_URL`（默认 `http://127.0.0.1:8000`）调用 `/api/health`，不可达就停止并报告，
+   不得伪造完成；
+2. 调用 `GET /api/projects` 获取项目城市，按 `cityId` 或城市名去重；
+3. 对没有启用政策来源的城市，先按 `policy-city-onboarding` Skill 找到并验证城市级、
+   必要的省级官方入口，再继续本 Skill；
+4. 对每个城市创建或复用一个 `trigger=workbuddy`、`scope=all` 的 research run，读取它的
+   brief，使用当前年份查询词主动检索新一期具体政策页、统计公报和政府文件；
+5. 严格按本 Skill 的 Step 2 到 Step 5 回传候选来源、原文抓取和字段建议。SQLite 是单机
+   交付模式，默认逐城完成并回传，避免多个城市同时写入产生不可读的中间状态；
+6. 只有实际进入 `researching`、`fetching` 或 `extracting` 后，才允许调用 `complete`。
+   对仍是 `queued` 的任务不能直接关闭为 `completed`；
+7. 最终汇总必须分别报告：正式来源、候选来源、`unchanged` 跳过数、灰色建议值、
+   `notDisclosed` 字段、错误，以及需要业务采用的内容。不要覆盖人工采用或人工覆盖的参数，
+   也不要把“回传成功”写成“参数已生效”。
+
+该模式由一个全局定时任务覆盖所有城市；新增城市后无需新建 WorkBuddy 任务。接手方只需
+在自己的 WorkBuddy 账号中根据仓库内的自动化模板创建一次任务，详见
+`.workbuddy/automations/README.md`。
 
 ## 这个 skill 在做什么
 
@@ -14,7 +39,7 @@ UE Agent 的城市参数里有 **20 个字段**来源标为「自动爬虫」，
 
 > **WorkBuddy 决定读什么、理解内容；API 负责下载、存档、校验、落库。**
 
-设计依据：`docs/superpowers/specs/2026-09-10-policy-ai-crawl-design.md` 第 8 节。
+设计依据：`docs/superpowers/specs/2026-09-15-policy-realtime-workbuddy-design.md`；固定来源兼容规则见 `docs/superpowers/specs/2026-09-10-policy-ai-crawl-design.md`。
 
 > **新城市第一次怎么配来源？** 那是另一个 skill 的职责：
 > **`policy-city-onboarding`**（同目录 `../policy-city-onboarding/SKILL.md`）——
@@ -26,7 +51,7 @@ UE Agent 的城市参数里有 **20 个字段**来源标为「自动爬虫」，
 
 | 项 | 说明 |
 | --- | --- |
-| `BASE_URL` | API 地址。本地默认 `http://127.0.0.1:8000`；发布后为线上地址 |
+| `BASE_URL` | API 地址。本地默认 `http://127.0.0.1:8000`；也可由交接方配置为可访问的 API 地址 |
 | `TOKEN` | 环境变量 `UE_AGENT_AGENT_TOKEN`。**未配置时 API 放行（仅本地开发）**；配置后回传类接口必须带 |
 | 鉴权头 | `x-ue-agent-token: $TOKEN`，或 `Authorization: Bearer $TOKEN` |
 
@@ -68,7 +93,43 @@ PYTHONPATH=services/api services/api/.venv/bin/python -m uvicorn app.main:app \
 
 ---
 
-## 执行流程（六步）
+## 默认入口：按需实时 research run
+
+收到“更新长沙政策”“找一下某城市最新长护险政策”等请求时，先创建或复用一个城市 research run，再按 brief 执行。这里的“实时”是**本次运行时使用联网检索和当前年份查询词**，不是定时器保证 24 小时监听。
+
+```bash
+RUN_JSON=$(curl -s --noproxy '*' -X POST "$BASE_URL/api/policies/research-runs" \
+  -H 'content-type: application/json' -H "x-ue-agent-token: $TOKEN" \
+  -d '{"cityId":"长沙","trigger":"workbuddy","scope":"all"}')
+RUN_ID=$(printf '%s' "$RUN_JSON" | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])')
+curl -s --noproxy '*' "$BASE_URL/api/policies/research-runs/$RUN_ID/brief"
+```
+
+如果任务是由政策页按钮创建的，初始状态为 `queued`，只表示**等待 WorkBuddy 执行**，不能在页面或汇总中写成“已完成”。页面会展示同一个 `taskPrompt`；没有桥接器时，把该提示复制到 WorkBuddy 对话里继续执行即可。WorkBuddy 对话触发时直接创建 `trigger=workbuddy` 的任务。
+
+按 brief 执行下面的统一顺序：
+
+1. 读取 `GET /api/policies/research-runs/{runId}/brief`，必须使用 brief 里的当前年份查询词；不要只使用固定来源 URL。
+2. 联网检索政策、统计公报、政府数据发布页和 PDF，优先具体文章/文件页，记录候选来源；来源通过 `POST /api/policies/source-candidates` 回传并带 `researchRunId`，非官方页面只入候选池。
+3. 将需要阅读的链接通过 `POST /api/policies/fetch-requests` 回传并带 `researchRunId`，由 API 下载、保存原文、计算 SHA256。只处理 `first_fetch` 或 `new_version`，`unchanged` 跳过抽取。
+4. 阅读 API 返回的原文文本，只抽取 brief 中的自动爬虫字段；每条 fact 必须带 `artifactId`、逐字 `quote`、单位、置信度和有效日期。
+5. 通过 `POST /api/policies/extraction-submissions` 回传并带 `researchRunId`，或使用 `POST /api/policies/research-runs/{runId}/results` 一次回传候选来源和抽取结果。
+6. 全部处理完调用 `POST /api/policies/research-runs/{runId}/complete`，请求体
+   `{"status":"completed|partial_failed|failed","agentRunId":"...","agentVersion":"...","errors":[]}`
+   （**没有 `summary` 字段**，传了会被 422 拒绝；运行摘要写在对话里，不进接口）；
+   不要把未执行的 queued 任务直接关闭为 completed。
+
+最小回传示例：
+
+```bash
+curl -s --noproxy '*' -X POST "$BASE_URL/api/policies/extraction-submissions" \
+  -H 'content-type: application/json' -H "x-ue-agent-token: $TOKEN" \
+  -d '{"cityId":"长沙","researchRunId":"research-xxx","agentRunId":"wb-xxx","agentVersion":"policy-ai-crawler@2","submissions":[{"sourceId":"source-xxx","artifactId":"artifact-xxx","facts":[{"fieldId":"P1","value":45,"unit":"元/小时","confidence":0.92,"quote":"逐字摘录的原文片段"}],"notDisclosed":["C6","C7","C8"]}]}'
+```
+
+上面示例中的 `sourceId`、`artifactId` 和 quote 需要替换成 API 实际返回的值；如果没有任何新原文，仍需按实际结果调用 complete，并在汇总中说明 `unchanged` 或未披露原因。
+
+## 执行流程（固定来源兼容六步）
 
 ### Step 1 · 拉取派活清单
 
@@ -367,6 +428,8 @@ except Exception as e:
 ```
 
 - 打印 `ConnectError('[SSL: BAD_ECPOINT] bad ecpoint')` → **国密证书，换 `http://`**。
+- 另一种常见变体：`[SSL: CERTIFICATE_VERIFY_FAILED] ... Hostname mismatch` ——
+  **证书没绑定该域名**（政务站常拿主域证书套子域）。处置相同：**换 `http://`**。
 - 注意 `curl` 用的是系统 TLS 栈，**它能通不代表抓取器能通**，别用 curl 的结果判断。
 
 实测：`https://ybj.hunan.gov.cn/...` ✗ → `http://ybj.hunan.gov.cn/...` ✓（HTTP 不跳 HTTPS）。

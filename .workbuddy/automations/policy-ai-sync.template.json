@@ -1,0 +1,10 @@
+{
+  "name": "UE-Agent 全城市政策同步",
+  "description": "在本机定期检索所有城市的最新长护险政策、统计数据和官方资料，并将原文与字段建议同步回 UE-Agent 本地 API。",
+  "rrule": "FREQ=DAILY;BYHOUR=8;BYMINUTE=0",
+  "timezone": "Asia/Shanghai",
+  "skill": "policy-ai-crawler",
+  "apiBaseUrl": "http://127.0.0.1:8000",
+  "tokenEnv": "UE_AGENT_AGENT_TOKEN",
+  "prompt": "请在当前 UE-Agent 工作区运行全城市政策同步。使用项目级 skill policy-ai-crawler；若发现没有政策来源的城市，先调用并执行 policy-city-onboarding。先检查 http://127.0.0.1:8000/api/health，然后读取 /api/projects 获取全部城市，逐城创建或复用 trigger=workbuddy、scope=all 的 research run。每城使用 research run brief 里的当前年份查询词检索官方政策、统计公报和政府文件，候选来源提交 /api/policies/source-candidates，原文统一交给 /api/policies/fetch-requests 保存和做 SHA256 变更检测，只对 first_fetch 或 new_version 抽取并回传 /api/policies/extraction-submissions。所有字段必须带 artifactId、逐字 quote、单位、置信度和有效日期；C6/C7/C8 必须放入 notDisclosed，禁止估算；不要覆盖人工采用或人工覆盖的参数。每个实际开始的 run 完成后调用 /api/policies/research-runs/{runId}/complete，不能把 queued 任务直接标记 completed。最后输出每城的来源、unchanged 跳过量、候选来源数、建议值数、错误数，并明确建议值仍需人工采用。若本地 API 不可达，停止写入并报告，不要伪造完成。"
+}

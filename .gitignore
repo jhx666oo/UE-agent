@@ -1,6 +1,7 @@
 node_modules/
 .next/
 out/
+dist/
 coverage/
 .turbo/
 *.tsbuildinfo
@@ -29,3 +30,5 @@ apps/web/CLAUDE.md
 .workbuddy/*
 !.workbuddy/skills/
 !.workbuddy/skills/**
+!.workbuddy/automations/
+!.workbuddy/automations/**

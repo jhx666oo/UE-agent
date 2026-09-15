@@ -129,6 +129,22 @@ skill **`policy-ai-crawler`**，不要在这里重复实现。
 
 ---
 
+## 配完来源之后：发起一轮实时政策研究
+
+新增城市完成来源配置后，建议立即创建一轮 research run，让 WorkBuddy 按当前年份再次检索最新政策和统计资料，而不是只依赖固定 URL：
+
+```bash
+RUN=$(curl -s --noproxy '*' -X POST "$BASE_URL/api/policies/research-runs" \
+  -H 'content-type: application/json' -H "x-ue-agent-token: $TOKEN" \
+  -d '{"cityId":"<城市ID>","trigger":"workbuddy","scope":"all"}')
+```
+
+读取返回的 `taskPrompt` 或 `GET /api/policies/research-runs/{runId}/brief`，按 `policy-ai-crawler` skill 完成候选来源、原文抓取和字段回传。未配置 token 的本地 Demo 可以省略鉴权头。这样新增城市的第一次“找最新资料”与后续“更新政策”使用同一套协议。
+
+在全城市定时任务中，如果 `/api/projects` 发现新城市没有启用来源，先执行本 Skill 完成来源
+发现与验证，再交给 `policy-ai-crawler` 执行 research run。不要为每个城市复制一份
+WorkBuddy 定时任务；统一任务模板在 `.workbuddy/automations/policy-ai-sync.template.json`。
+
 ## 配完来源之后：仪表盘对比图是自动的，不用改代码
 
 新城市跑完测算后，**「城市对比」视图会自动带上它**——趋势图按城市分线、

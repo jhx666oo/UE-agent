@@ -5,16 +5,19 @@ UE Agent 首版按「本机可运行、可交接」设计：结构化数据存 S
 ## 前置条件
 
 - Node.js 与 pnpm（仓库 `packageManager` 固定 `pnpm@11.14.0`）
-- uv（用于 Python 依赖与虚拟环境）
-- 首次拉取后执行 `pnpm install`，Python 侧由 `uv run --project services/api` 自动建环境
+- Python 3.11+
+- 首次拉取后执行 `pnpm setup`，脚本会创建 `services/api/.venv` 并安装 Python/Node 依赖；不要求接手方预装 uv
 
 ## 启动步骤
 
 ```bash
-pnpm install
-pnpm bootstrap   # 建数据目录、建库建表，并在库内无项目时导入既有 projects.json
+pnpm setup       # 安装依赖，初始化或恢复交付包内 SQLite 数据
 pnpm dev:all     # 同时启动 API（:8000）和前端（:3000），任一进程退出即整体停止
 ```
+
+如果是从 Git 仓库直接拉取且没有 `handoff-data/`，`pnpm setup` 会创建空库；如果是从
+`pnpm handoff:package` 的压缩包解压，脚本会在空数据目录中自动恢复其中的演示数据和政策原文。
+重新执行不会重复导入项目。
 
 需要分开看日志时用两个终端：
 
@@ -24,6 +27,13 @@ pnpm dev
 ```
 
 前端默认访问 `http://localhost:3000`，API 访问 `http://localhost:8000`。API 不在默认地址时，复制 `apps/web/.env.example` 为 `.env.local` 并修改 `NEXT_PUBLIC_API_BASE_URL`。
+
+需要更新某城市最新政策时，在政策城市页点击“AI 实时更新政策”创建任务；页面会显示 `queued` 和可复制的 WorkBuddy 任务提示。将提示交给 WorkBuddy，或直接在 WorkBuddy 对话中说“更新长沙政策”，WorkBuddy 会读取 research run brief，按当前年份检索并通过 API 保存原文、候选来源和灰色建议值。建议值不会自动覆盖人工参数，必须回到城市测算页逐条采用。
+
+长期运行时使用仓库内的 `.workbuddy/skills/policy-ai-crawler/SKILL.md` 和
+`.workbuddy/automations/policy-ai-sync.template.json`：WorkBuddy 每日 08:00 读取全部城市，
+新增城市先走 `policy-city-onboarding`，然后逐城执行实时研究和回传。定时任务记录属于
+WorkBuddy 账号，接手方需要在自己的账号中按模板创建一次；代码、Skill、数据和执行规则均随交付包携带。
 
 ## 数据位置
 

@@ -179,4 +179,47 @@ echo "==> 9. 回传审计记录"
 curl -s --noproxy '*' "$BASE/api/policies/extraction-submissions?cityId=changsha" | "$PY" "$ASSERT" submissions
 
 echo
+echo "==> 10. 按需实时政策研究：创建任务 + 读取当前年份 brief"
+RESEARCH_RUN=$(curl -s --noproxy '*' -X POST "$BASE/api/policies/research-runs" \
+  -H 'Content-Type: application/json' \
+  -d '{"cityId":"changsha","trigger":"workbuddy","scope":"all"}')
+echo "$RESEARCH_RUN" | "$PY" "$ASSERT" research-run
+RESEARCH_ID=$(echo "$RESEARCH_RUN" | "$PY" -c "import sys,json;print(json.load(sys.stdin)['id'])")
+curl -s --noproxy '*' "$BASE/api/policies/research-runs/$RESEARCH_ID/brief" | "$PY" "$ASSERT" research-brief
+
+echo
+echo "==> 10b. 通过 researchRunId 抓取最新原文并验证任务关联"
+RESEARCH_FETCH=$(curl -s --noproxy '*' -X POST "$BASE/api/policies/fetch-requests" \
+  -H 'Content-Type: application/json' -d "{\"researchRunId\":\"$RESEARCH_ID\",\"requests\":[{\"url\":\"http://127.0.0.1:${FIXTURE_PORT}/policy\",\"cityId\":\"changsha\",\"sourceId\":\"$SOURCE_ID\"}]}" )
+echo "$RESEARCH_FETCH" | "$PY" "$ASSERT" fetch
+RESEARCH_ARTIFACT_ID=$(echo "$RESEARCH_FETCH" | "$PY" -c "import sys,json;print(json.load(sys.stdin)['results'][0]['artifactId'])")
+curl -s --noproxy '*' "$BASE/api/policies/sources/$SOURCE_ID/artifacts" | "$PY" "$ASSERT" research-artifacts
+
+echo
+echo "==> 10c. 回传实时检索结果：候选来源 + 带原文证据的建议值"
+curl -s --noproxy '*' -X POST "$BASE/api/policies/research-runs/$RESEARCH_ID/results" \
+  -H 'Content-Type: application/json' -d '{
+  "agentRunId":"e2e-research-001",
+  "agentVersion":"policy-ai-crawler@2",
+  "candidates":[
+    {"url":"https://ybj.changsha.gov.cn/policy-2026","name":"长沙医保局2026政策原文","targetFields":["P1"],"relevance":0.96}
+  ],
+  "submissions":[
+    {"sourceId":"'"$SOURCE_ID"'","artifactId":"'"$RESEARCH_ARTIFACT_ID"'","facts":[
+      {"fieldId":"P1","value":66,"unit":"元/小时","confidence":0.96,"quote":"单小时服务单价调整为 66 元"}
+    ],"notDisclosed":["C6","C7","C8"]}
+  ]
+}' | "$PY" "$ASSERT" research-results
+
+echo
+echo "==> 10d. 关闭实时政策研究任务"
+curl -s --noproxy '*' -X POST "$BASE/api/policies/research-runs/$RESEARCH_ID/complete" \
+  -H 'Content-Type: application/json' -d '{
+  "status":"completed",
+  "agentRunId":"e2e-research-001",
+  "agentVersion":"policy-ai-crawler@2",
+  "errors":[]
+}' | "$PY" "$ASSERT" research-complete
+
+echo
 echo "端到端流程完成。"

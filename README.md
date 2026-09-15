@@ -19,6 +19,7 @@
 
 - [UE Agent 产品需求文档（v1.1 Demo 基线）](docs/product/UE-Agent-产品需求文档-v1.0.md)
 - [本地运行与交付](docs/deployment/local.md)
+- [可移植交付说明](docs/deployment/portable-handoff.md)
 - [UE Agent 详细开发规范 v0.1](docs/UE-Agent-详细开发规范-v0.1.md)
 - [GitHub 参考项目与技术选型](docs/GitHub-参考项目与技术选型.md)
 - [开发规范总则 v0.2](docs/standards/00-规范总则.md)
@@ -65,10 +66,16 @@
 ## 本阶段运行方式
 
 ```bash
-pnpm install
-pnpm bootstrap   # 建数据目录与 SQLite 表结构，并在库内无项目时导入既有 projects.json
+pnpm setup       # 接手方一键安装依赖、初始化或恢复 SQLite
 pnpm dev:all     # 同时启动 API 与前端，任一进程退出即整体停止
 ```
+
+只需要初始化数据库、不安装依赖时仍可使用 `pnpm bootstrap`；接手方优先使用上面的 `pnpm setup`。
+
+交付方可用 `pnpm handoff:check && pnpm handoff:package` 生成源码、当前 SQLite 数据、政策原文、
+WorkBuddy Skill 和全城市定时任务模板组成的压缩包。接手方解压后只需运行 `pnpm setup`；
+WorkBuddy 的账号级定时任务不能随 Git 复制，但可按 `.workbuddy/automations/policy-ai-sync.template.json`
+一次创建，之后新增城市无需再配置任务。
 
 需要在两个终端分别看日志时执行 `pnpm api:dev` 和 `pnpm dev`。API 默认访问 `http://localhost:8000`，前端默认访问 `http://localhost:3000`。当前可查看 `/`、`/projects`、`/projects/new`、`/policies`、`/settings`。旧入口 `/u1` 和 `/projects/{projectId}/u1` 保留兼容跳转。
 
@@ -79,6 +86,10 @@ pnpm dev:all     # 同时启动 API 与前端，任一进程退出即整体停�
 自动发现默认使用 `https://www.baidu.com/s?wd={query}`，可通过 `UE_AGENT_DISCOVERY_SEARCH_URL` 替换为公司搜索服务或 AI 网关。官方政务来源自动入正式来源，普通结果进入候选来源区；搜索服务不可用时只标记任务部分失败，不阻塞人工测算。
 
 政策来源也支持通过 `POST /api/policies/cities/{cityId}/crawl-all` 一键抓取该城市全部启用来源，单个来源失败不会阻断整批任务。
+
+政策更新还支持按需实时检索：页面点击“AI 实时更新政策”，或在 WorkBuddy 对话中提出“更新长沙政策”，都会创建同一种 `research-runs` 任务。WorkBuddy 使用 brief 中带当前年份的查询词搜索最新官方文章、统计公报和 PDF，再通过 API 抓取原文、保存本地版本并回传带逐字引用的字段建议值。页面创建的任务会先显示 `queued` 和可复制任务提示，直到 WorkBuddy 实际执行；建议值仍需人工在城市测算页采用后才影响结果。
+
+实时检索接口包括 `POST/GET /api/policies/research-runs`、`GET /api/policies/research-runs/{runId}/brief`、`POST /api/policies/research-runs/{runId}/retry`、`POST /api/policies/research-runs/{runId}/results` 和 `POST /api/policies/research-runs/{runId}/complete`。具体执行顺序见 `.workbuddy/skills/policy-ai-crawler/SKILL.md`。
 
 验证 U1 模型与后端：
 

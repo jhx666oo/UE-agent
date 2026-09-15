@@ -170,6 +170,40 @@ def step_submissions(items: list[dict]) -> None:
         )
 
 
+def step_research_run(data: dict) -> None:
+    assert data["status"] == "queued", data
+    assert data["queryCount"] == 3, data
+    assert data.get("taskPrompt"), data
+    print(f"   实时政策任务已创建：{data['id']}；状态 {data['status']}；查询 {data['queryCount']} 个")
+
+
+def step_research_brief(data: dict) -> None:
+    assert data["run"]["status"] == "queued", data
+    assert len(data["queries"]) == 3, data
+    assert str(data["currentYear"]) in " ".join(item["query"] for item in data["queries"]), data
+    assert {"C6", "C7", "C8"}.issubset(set(data["neverEstimateFields"])), data
+    print(f"   动态 brief：{data['currentYear']} 年查询 {len(data['queries'])} 个；禁止估算 C6/C7/C8")
+
+
+def step_research_results(data: dict) -> None:
+    assert data["run"]["status"] == "awaiting_review", data
+    assert data["candidateResult"]["createdCount"] == 1, data
+    assert data["extractionResult"]["acceptedCount"] == 1, data
+    print(f"   实时回传：新候选 {data['candidateResult']['createdCount']} 条；建议值 {data['run']['suggestionCount']} 个")
+
+
+def step_research_artifacts(data: list[dict]) -> None:
+    correlated = [item for item in data if item.get("researchRunId")]
+    assert correlated, data
+    print(f"   原文任务关联成功：{correlated[-1]['researchRunId']}（共 {len(correlated)} 条关联原文）")
+
+
+def step_research_complete(data: dict) -> None:
+    assert data["status"] == "completed", data
+    assert data["finishedAt"], data
+    print(f"   实时政策任务完成：{data['id']}；建议值仍需人工采用")
+
+
 STEPS = {
     "targets": step_targets,
     "fetch": step_fetch,
@@ -185,6 +219,11 @@ STEPS = {
     "candidates": step_candidates,
     "sources": step_sources,
     "submissions": step_submissions,
+    "research-run": step_research_run,
+    "research-brief": step_research_brief,
+    "research-results": step_research_results,
+    "research-artifacts": step_research_artifacts,
+    "research-complete": step_research_complete,
 }
 
 

@@ -221,6 +221,49 @@ class SqliteProjectRepository:
         }
 
     @staticmethod
+    def _research_run_dict(row: sqlite3.Row) -> dict[str, Any]:
+        return {
+            "id": row["id"],
+            "cityId": row["city_id"],
+            "projectId": row["project_id"],
+            "trigger": row["trigger"],
+            "scope": _load(row["scope_json"], "all"),
+            "fields": _load(row["fields_json"], []),
+            "status": row["status"],
+            "phase": row["phase"],
+            "agentRunId": row["agent_run_id"],
+            "agentVersion": row["agent_version"],
+            "queryCount": row["query_count"],
+            "sourceCount": row["source_count"],
+            "newSourceCount": row["new_source_count"],
+            "changedSourceCount": row["changed_source_count"],
+            "fetchedCount": row["fetched_count"],
+            "suggestionCount": row["suggestion_count"],
+            "errorCount": row["error_count"],
+            "errors": _load(row["errors_json"], []),
+            "taskPrompt": row["task_prompt"],
+            "requestedAt": row["requested_at"],
+            "startedAt": row["started_at"],
+            "finishedAt": row["finished_at"],
+            "createdAt": row["created_at"],
+            "updatedAt": row["updated_at"],
+        }
+
+    @staticmethod
+    def _research_query_dict(row: sqlite3.Row) -> dict[str, Any]:
+        return {
+            "id": row["id"],
+            "runId": row["run_id"],
+            "family": row["family"],
+            "query": row["query"],
+            "status": row["status"],
+            "resultCount": row["result_count"],
+            "errorMessage": row["error_message"],
+            "searchedAt": row["searched_at"],
+            "createdAt": row["created_at"],
+        }
+
+    @staticmethod
     def _document_dict(row: sqlite3.Row) -> dict[str, Any]:
         return {
             "id": row["id"],
@@ -494,6 +537,182 @@ class SqliteProjectRepository:
                 "SELECT * FROM city_onboarding_jobs WHERE id = ?", (job_id,)
             ).fetchone()
         return self._onboarding_job_dict(row)
+
+    def create_research_run(self, data: Mapping[str, Any]) -> dict[str, Any]:
+        now = utc_now()
+        run = {
+            "id": str(data.get("id") or new_id("research")),
+            "cityId": str(data["cityId"]),
+            "projectId": data.get("projectId"),
+            "trigger": str(data.get("trigger") or "ui"),
+            "scope": str(data.get("scope") or "all"),
+            "fields": list(data.get("fields") or []),
+            "status": str(data.get("status") or "queued"),
+            "phase": str(data.get("phase") or "queued"),
+            "agentRunId": data.get("agentRunId"),
+            "agentVersion": data.get("agentVersion"),
+            "queryCount": int(data.get("queryCount") or 0),
+            "sourceCount": int(data.get("sourceCount") or 0),
+            "newSourceCount": int(data.get("newSourceCount") or 0),
+            "changedSourceCount": int(data.get("changedSourceCount") or 0),
+            "fetchedCount": int(data.get("fetchedCount") or 0),
+            "suggestionCount": int(data.get("suggestionCount") or 0),
+            "errorCount": int(data.get("errorCount") or 0),
+            "errors": list(data.get("errors") or []),
+            "taskPrompt": data.get("taskPrompt"),
+            "requestedAt": data.get("requestedAt") or now,
+            "startedAt": data.get("startedAt"),
+            "finishedAt": data.get("finishedAt"),
+            "createdAt": now,
+            "updatedAt": now,
+        }
+        try:
+            with self._db() as connection:
+                connection.execute(
+                    "INSERT INTO policy_research_runs (id, city_id, project_id, trigger, scope_json, fields_json,"
+                    " status, phase, agent_run_id, agent_version, query_count, source_count, new_source_count,"
+                    " changed_source_count, fetched_count, suggestion_count, error_count, errors_json, task_prompt,"
+                    " requested_at, started_at, finished_at, created_at, updated_at)"
+                    " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        run["id"], run["cityId"], run["projectId"], run["trigger"], _dump(run["scope"]),
+                        _dump(run["fields"]), run["status"], run["phase"], run["agentRunId"], run["agentVersion"],
+                        run["queryCount"], run["sourceCount"], run["newSourceCount"], run["changedSourceCount"],
+                        run["fetchedCount"], run["suggestionCount"], run["errorCount"], _dump(run["errors"]),
+                        run["taskPrompt"], run["requestedAt"], run["startedAt"], run["finishedAt"],
+                        run["createdAt"], run["updatedAt"],
+                    ),
+                )
+        except sqlite3.IntegrityError:
+            active = self.get_active_research_run(run["cityId"])
+            if active is not None:
+                return active
+            raise
+        return run
+
+    def get_research_run(self, run_id: str) -> dict[str, Any]:
+        with self._db() as connection:
+            row = connection.execute(
+                "SELECT * FROM policy_research_runs WHERE id = ?", (run_id,)
+            ).fetchone()
+        if row is None:
+            raise KeyError(run_id)
+        return self._research_run_dict(row)
+
+    def get_active_research_run(self, city_id: str) -> dict[str, Any] | None:
+        with self._db() as connection:
+            row = connection.execute(
+                "SELECT * FROM policy_research_runs WHERE city_id = ?"
+                " AND status IN ('queued','researching','fetching','extracting','awaiting_review')"
+                " ORDER BY updated_at DESC LIMIT 1",
+                (city_id,),
+            ).fetchone()
+        return self._research_run_dict(row) if row is not None else None
+
+    def list_research_runs(
+        self, city_id: str | None = None, limit: int | None = None
+    ) -> list[dict[str, Any]]:
+        clause = " WHERE city_id = ?" if city_id is not None else ""
+        params: list[Any] = [city_id] if city_id is not None else []
+        sql = f"SELECT * FROM policy_research_runs{clause} ORDER BY updated_at DESC, id DESC"
+        if limit:
+            sql += " LIMIT ?"
+            params.append(int(limit))
+        with self._db() as connection:
+            rows = connection.execute(sql, params).fetchall()
+        return [self._research_run_dict(row) for row in rows]
+
+    def update_research_run(self, run_id: str, data: Mapping[str, Any]) -> dict[str, Any]:
+        column_by_key = {
+            "projectId": "project_id", "trigger": "trigger", "status": "status", "phase": "phase",
+            "agentRunId": "agent_run_id", "agentVersion": "agent_version", "queryCount": "query_count",
+            "sourceCount": "source_count", "newSourceCount": "new_source_count",
+            "changedSourceCount": "changed_source_count", "fetchedCount": "fetched_count",
+            "suggestionCount": "suggestion_count", "errorCount": "error_count", "taskPrompt": "task_prompt",
+            "requestedAt": "requested_at", "startedAt": "started_at", "finishedAt": "finished_at",
+        }
+        assignments: list[str] = []
+        values: list[Any] = []
+        for key, column in column_by_key.items():
+            if key in data:
+                assignments.append(f"{column} = ?")
+                values.append(data[key])
+        if "scope" in data:
+            assignments.append("scope_json = ?")
+            values.append(_dump(data["scope"]))
+        if "fields" in data:
+            assignments.append("fields_json = ?")
+            values.append(_dump(data["fields"]))
+        if "errors" in data:
+            assignments.append("errors_json = ?")
+            values.append(_dump(data["errors"]))
+        assignments.append("updated_at = ?")
+        values.extend([utc_now(), run_id])
+        with self._db() as connection:
+            updated = connection.execute(
+                f"UPDATE policy_research_runs SET {', '.join(assignments)} WHERE id = ?", values
+            )
+            if updated.rowcount == 0:
+                raise KeyError(run_id)
+            row = connection.execute(
+                "SELECT * FROM policy_research_runs WHERE id = ?", (run_id,)
+            ).fetchone()
+        return self._research_run_dict(row)
+
+    def create_research_query(self, data: Mapping[str, Any]) -> dict[str, Any]:
+        now = utc_now()
+        query = {
+            "id": str(data.get("id") or new_id("research-query")),
+            "runId": str(data["runId"]),
+            "family": str(data["family"]),
+            "query": str(data["query"]),
+            "status": str(data.get("status") or "queued"),
+            "resultCount": int(data.get("resultCount") or 0),
+            "errorMessage": data.get("errorMessage"),
+            "searchedAt": data.get("searchedAt"),
+            "createdAt": now,
+        }
+        with self._db() as connection:
+            connection.execute(
+                "INSERT INTO policy_research_queries (id, run_id, family, query, status, result_count,"
+                " error_message, searched_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    query["id"], query["runId"], query["family"], query["query"], query["status"],
+                    query["resultCount"], query["errorMessage"], query["searchedAt"], query["createdAt"],
+                ),
+            )
+        return query
+
+    def list_research_queries(self, run_id: str) -> list[dict[str, Any]]:
+        with self._db() as connection:
+            rows = connection.execute(
+                "SELECT * FROM policy_research_queries WHERE run_id = ? ORDER BY created_at ASC, id ASC",
+                (run_id,),
+            ).fetchall()
+        return [self._research_query_dict(row) for row in rows]
+
+    def update_research_query(self, query_id: str, data: Mapping[str, Any]) -> dict[str, Any]:
+        column_by_key = {
+            "status": "status", "resultCount": "result_count", "errorMessage": "error_message",
+            "searchedAt": "searched_at",
+        }
+        assignments: list[str] = []
+        values: list[Any] = []
+        for key, column in column_by_key.items():
+            if key in data:
+                assignments.append(f"{column} = ?")
+                values.append(data[key])
+        values.append(query_id)
+        with self._db() as connection:
+            updated = connection.execute(
+                f"UPDATE policy_research_queries SET {', '.join(assignments)} WHERE id = ?", values
+            )
+            if updated.rowcount == 0:
+                raise KeyError(query_id)
+            row = connection.execute(
+                "SELECT * FROM policy_research_queries WHERE id = ?", (query_id,)
+            ).fetchone()
+        return self._research_query_dict(row)
 
     def create_scenario(self, project_id: str, data: Mapping[str, Any]) -> dict[str, Any]:
         now = utc_now()
@@ -1147,6 +1366,7 @@ class SqliteProjectRepository:
             "changeStatus": row["change_status"],
             "status": row["status"],
             "errorMessage": row["error_message"],
+            "researchRunId": row["research_run_id"],
         }
 
     def list_crawl_artifacts(
@@ -1185,7 +1405,8 @@ class SqliteProjectRepository:
             connection.execute(
                 "INSERT INTO crawl_artifacts (id, source_id, city_id, requested_url, final_url, fetched_at,"
                 " http_status, content_type, content_length, sha256, stored_path, title, change_status,"
-                " status, error_message, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                " status, error_message, research_run_id, created_at)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     artifact_id,
                     artifact["sourceId"],
@@ -1202,6 +1423,7 @@ class SqliteProjectRepository:
                     artifact.get("changeStatus"),
                     artifact.get("status", "success"),
                     artifact.get("errorMessage"),
+                    artifact.get("researchRunId"),
                     utc_now(),
                 ),
             )
@@ -1228,6 +1450,7 @@ class SqliteProjectRepository:
             "reviewedBy": row["reviewed_by"],
             "reviewedAt": row["reviewed_at"],
             "note": row["note"],
+            "researchRunId": row["research_run_id"],
             "createdAt": row["created_at"],
             "updatedAt": row["updated_at"],
         }
@@ -1273,7 +1496,8 @@ class SqliteProjectRepository:
                 candidate_id = existing["id"]
                 connection.execute(
                     "UPDATE candidate_sources SET name = ?, domain = ?, title = ?, published_at = ?,"
-                    " summary = ?, target_fields_json = ?, relevance_json = ?, note = ?, updated_at = ?"
+                    " summary = ?, target_fields_json = ?, relevance_json = ?, note = ?,"
+                    " research_run_id = COALESCE(?, research_run_id), updated_at = ?"
                     " WHERE id = ?",
                     (
                         str(data.get("name") or ""),
@@ -1284,6 +1508,7 @@ class SqliteProjectRepository:
                         _dump(data.get("targetFields") or []),
                         _dump(data.get("relevance")),
                         data.get("note"),
+                        data.get("researchRunId"),
                         now,
                         candidate_id,
                     ),
@@ -1292,8 +1517,8 @@ class SqliteProjectRepository:
                 connection.execute(
                     "INSERT INTO candidate_sources (id, city_id, name, url, domain, title, published_at,"
                     " summary, target_fields_json, relevance_json, origin, status, promoted_source_id,"
-                    " reviewed_by, reviewed_at, note, created_at, updated_at)"
-                    " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    " reviewed_by, reviewed_at, note, research_run_id, created_at, updated_at)"
+                    " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     (
                         candidate_id,
                         city_id,
@@ -1311,6 +1536,7 @@ class SqliteProjectRepository:
                         data.get("reviewedBy"),
                         data.get("reviewedAt"),
                         data.get("note"),
+                        data.get("researchRunId"),
                         now,
                         now,
                     ),
@@ -1335,6 +1561,7 @@ class SqliteProjectRepository:
             "reviewedBy": "reviewed_by",
             "reviewedAt": "reviewed_at",
             "note": "note",
+            "researchRunId": "research_run_id",
         }
         assignments: list[str] = []
         params: list[Any] = []
@@ -1372,6 +1599,7 @@ class SqliteProjectRepository:
             "artifactId": row["artifact_id"],
             "agentRunId": row["agent_run_id"],
             "agentVersion": row["agent_version"],
+            "researchRunId": row["research_run_id"],
             "payload": _load(row["payload_json"], {}),
             "resultStatus": row["result_status"],
             "acceptedCount": row["accepted_count"],
@@ -1388,9 +1616,9 @@ class SqliteProjectRepository:
         with self._db() as connection:
             connection.execute(
                 "INSERT INTO extraction_submissions (id, city_id, source_id, artifact_id, agent_run_id,"
-                " agent_version, payload_json, result_status, accepted_count, rejected_count,"
+                " agent_version, research_run_id, payload_json, result_status, accepted_count, rejected_count,"
                 " rejection_json, submitted_at, created_at)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     submission_id,
                     data.get("cityId"),
@@ -1398,6 +1626,7 @@ class SqliteProjectRepository:
                     data.get("artifactId"),
                     data.get("agentRunId"),
                     data.get("agentVersion"),
+                    data.get("researchRunId"),
                     _dump(data.get("payload") or {}),
                     str(data.get("resultStatus") or "accepted"),
                     int(data.get("acceptedCount") or 0),

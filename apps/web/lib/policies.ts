@@ -52,6 +52,7 @@ export type CrawlArtifact = {
   changeStatus: "first_fetch" | "unchanged" | "new_version" | null;
   status: "success" | "failed";
   errorMessage: string | null;
+  researchRunId?: string | null;
   suggestions?: Array<{ fieldId: string; name: string; value: number | string; quote: string }>;
 };
 
@@ -238,6 +239,86 @@ export type CrawlTargetsResponse = {
   cities: Array<{ cityId: string; cityName: string; sources: CrawlTargetSource[] }>;
 };
 
+export type PolicyResearchRunStatus =
+  | "queued"
+  | "researching"
+  | "fetching"
+  | "extracting"
+  | "awaiting_review"
+  | "completed"
+  | "partial_failed"
+  | "failed";
+
+export type PolicyResearchRun = {
+  id: string;
+  cityId: string;
+  projectId: string | null;
+  trigger: "ui" | "workbuddy";
+  scope: "all" | "policy" | "population" | "space";
+  fields: string[];
+  status: PolicyResearchRunStatus;
+  phase: string;
+  agentRunId: string | null;
+  agentVersion: string | null;
+  queryCount: number;
+  sourceCount: number;
+  newSourceCount: number;
+  changedSourceCount: number;
+  fetchedCount: number;
+  suggestionCount: number;
+  errorCount: number;
+  errors: string[];
+  taskPrompt: string | null;
+  requestedAt: string;
+  startedAt: string | null;
+  finishedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type PolicyResearchQuery = {
+  id: string;
+  runId: string;
+  family: string;
+  query: string;
+  status: string;
+  resultCount: number;
+  errorMessage: string | null;
+  searchedAt: string | null;
+  createdAt: string;
+};
+
+export type PolicyResearchBrief = {
+  runId: string;
+  cityId: string;
+  projectId: string | null;
+  trigger: "ui" | "workbuddy";
+  scope: "all" | "policy" | "population" | "space";
+  generatedAt: string;
+  currentYear: number;
+  queries: Array<PolicyResearchQuery & {
+    fallbackQuery: string;
+    fields: string[];
+    sourceHint: string;
+  }>;
+  fieldCatalog: FieldCatalogEntry[];
+  fieldFamilies: CrawlTargetsResponse["fieldFamilies"];
+  difficultyLevels: Record<FieldDifficulty, string>;
+  neverEstimateFields: string[];
+  alreadyFilled: string[];
+  sources: CrawlTargetSource[];
+  recentArtifacts: CrawlArtifact[];
+  run: PolicyResearchRun;
+};
+
+export type PolicyResearchRunCreateInput = {
+  cityId: string;
+  projectId?: string;
+  trigger?: "ui" | "workbuddy";
+  scope?: "all" | "policy" | "population" | "space";
+  fields?: string[];
+};
+
 /** 候选来源状态：API 侧新建默认 "candidate"，人工处理后转 promoted / rejected。 */
 export type SourceCandidateStatus = "candidate" | "promoted" | "rejected";
 
@@ -415,6 +496,36 @@ export function listSourceArtifacts(sourceId: string) {
 /** 派活清单：城市来源、增量待填字段、字段目录与检索提示。 */
 export function getCrawlTargets() {
   return apiFetch<CrawlTargetsResponse>("/api/policies/crawl-targets");
+}
+
+export function createPolicyResearchRun(input: PolicyResearchRunCreateInput) {
+  return apiFetch<PolicyResearchRun>("/api/policies/research-runs", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export function listPolicyResearchRuns(cityId?: string, limit = 20) {
+  const params = new URLSearchParams({ limit: String(limit) });
+  if (cityId) params.set("cityId", cityId);
+  return apiFetch<PolicyResearchRun[]>(`/api/policies/research-runs?${params.toString()}`);
+}
+
+export function getPolicyResearchRun(runId: string) {
+  return apiFetch<PolicyResearchRun>(`/api/policies/research-runs/${encodeURIComponent(runId)}`);
+}
+
+export function getPolicyResearchBrief(runId: string) {
+  return apiFetch<PolicyResearchBrief>(
+    `/api/policies/research-runs/${encodeURIComponent(runId)}/brief`,
+  );
+}
+
+export function retryPolicyResearchRun(runId: string) {
+  return apiFetch<PolicyResearchRun>(
+    `/api/policies/research-runs/${encodeURIComponent(runId)}/retry`,
+    { method: "POST" },
+  );
 }
 
 export function listSourceCandidates(cityId?: string, status?: SourceCandidateStatus) {
