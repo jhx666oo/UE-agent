@@ -41,6 +41,8 @@ def _is_excluded(relative: Path, *, is_dir: bool) -> bool:
     parts = relative.parts
     if not parts:
         return False
+    if not is_dir and relative.name == ".DS_Store":
+        return True
     if any(part in EXCLUDED_DIRECTORY_NAMES for part in parts):
         return True
     if parts[0] == ".workbuddy" and len(parts) >= 2 and parts[1] not in {"skills", "automations"}:
@@ -112,7 +114,7 @@ def _write_handoff_readme(path: Path, *, has_data: bool) -> None:
     )
     path.write_text(
         f"""# UE-Agent 交付包\n\n"
-        "这是可继续开发的本地 Demo 交付包，包含源码、模型契约、前端、FastAPI、SQLite 数据结构、WorkBuddy 项目级 Skill 和定时任务模板。\n\n"
+        "这是可继续开发的本地 Demo 交付包，包含源码、模型契约、前端、FastAPI、SQLite 数据结构、项目专属 AI 上下文、WorkBuddy 项目级 Skill 和定时任务模板。\n\n"
         f"{data_note}\n\n"
         "## 接手方启动\n\n"
         "```bash\n"
@@ -124,7 +126,7 @@ def _write_handoff_readme(path: Path, *, has_data: bool) -> None:
         "`.workbuddy/skills/` 中的两个 Skill 会随仓库一起交付。请在同一台电脑上打开这个工作区，并让 WorkBuddy 根据 `.workbuddy/automations/policy-ai-sync.template.json` 创建一次名为“UE-Agent 全城市政策同步”的定时任务。\n\n"
         "WorkBuddy 的定时任务记录属于接手人的账号，不会携带原账号 ID、登录态或令牌导出；这是唯一需要在接手方 WorkBuddy 中执行一次的初始化动作。任务运行时通过 `http://127.0.0.1:8000` 回写本地 API。\n\n"
         "## 数据与安全\n\n"
-        "- `.env.local`、Vercel OIDC token、依赖目录、构建缓存和 WorkBuddy 私有 memory 不在交付包内。\n"
+        "- `.env.local`、Vercel OIDC token、依赖目录、构建缓存、用户/账号级记忆和 WorkBuddy 私有 memory 不在交付包内；项目约定见 `PROJECT_CONTEXT.md`。\n"
         "- `C6/C7/C8` 不允许估算。政策建议值只进入灰色待采用状态，不自动覆盖人工值。\n"
         "- 接手人如果要在另一台电脑运行 WorkBuddy，必须确认 WorkBuddy 能访问该电脑的 `127.0.0.1:8000`；云端任务不能直接访问本机地址。\n"
         """,

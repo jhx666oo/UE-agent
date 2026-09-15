@@ -473,6 +473,20 @@ curl -s -X POST "$BASE_URL/api/policies/source-candidates/{candidateId}/reject" 
 | 抓取报「**官网返回 HTTP 412，未保存内容**」 | **JS 挑战型 WAF**（实测 `*.chengdu.gov.cn` 全域，http/https、换 UA、加 Referer 都无效；返回的是要求计算 cookie 的混淆脚本） | 纯 HTTP 通道**无解**。不要反复重试；登记该域名为「需浏览器通道」，在 complete 的 `errors` 里如实说明，相关字段 notDisclosed 待通道升级后补抓 |
 | 抓取报「**响应大小 N 字节超过上限**」 | 原文超过 10MB 上限（政务 PDF 常见，内嵌大量图片可达 30MB+）。注意：**HTML 页被 WAF 拦时，同站的 PDF 附件直链（`/gkml/uploadfiles/...pdf`）往往能通到下载阶段** | PDF 超限无解（不能裁剪——SHA 档案必须完整）。在 errors 里说明；统计公报关键数据常另有 HTML 版或转载版可寻 |
 
+### 浏览器兜底任务（browser fallback）的实测结论
+
+来源 412 后会生成浏览器兜底任务（`GET /policies/fallback-tasks` → `claim` → 处理）：
+
+1. **真实 Chromium 也过不了瑞数 WAF**：能拿到挑战 cookie，但服务器识别自动化指纹后
+   返回 200 + 6 字节空正文（软屏蔽）。无头/有头都一样，**不要反复重试原链接**。
+2. 正确路径：检索**同一发布主体的备用官方站**（如省同城化办的 cdmztch.com 之于
+   chengdu.gov.cn 的同城化页），浏览器打开取正文；
+3. `POST /policies/browser-artifacts` 回传
+   `{cityId, sourceId, requestedUrl, finalUrl, title, content}` —— 归档进同一证据链
+   （SHA256 + raw_sources），兜底任务自动变 `archived`；
+4. 再用返回的 artifactId 按字段目录提交抽取（quote 从归档正文逐字取）；
+5. 找不到官方正文就 `POST /policies/fallback-tasks/{task_id}/fail` 写回原因，不要硬编数。
+
 ### 政务站抓不了的真正原因：国密证书（重要）
 
 `https://` 的国内政务站常用**国密 SM2 证书**，Python 的 OpenSSL 3.x 拒绝解析，

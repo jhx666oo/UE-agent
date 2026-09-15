@@ -8,6 +8,8 @@ FAILED=0
 
 required_files=(
   ".env.example"
+  "AGENTS.md"
+  "PROJECT_CONTEXT.md"
   ".workbuddy/skills/policy-ai-crawler/SKILL.md"
   ".workbuddy/skills/policy-city-onboarding/SKILL.md"
   ".workbuddy/automations/policy-ai-sync.template.json"

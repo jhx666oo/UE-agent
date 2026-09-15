@@ -20,6 +20,7 @@
 - [UE Agent 产品需求文档（v1.1 Demo 基线）](docs/product/UE-Agent-产品需求文档-v1.0.md)
 - [本地运行与交付](docs/deployment/local.md)
 - [可移植交付说明](docs/deployment/portable-handoff.md)
+- [项目专属 AI 上下文与长期记忆](PROJECT_CONTEXT.md)
 - [UE Agent 详细开发规范 v0.1](docs/UE-Agent-详细开发规范-v0.1.md)
 - [GitHub 参考项目与技术选型](docs/GitHub-参考项目与技术选型.md)
 - [开发规范总则 v0.2](docs/standards/00-规范总则.md)
@@ -73,7 +74,7 @@ pnpm dev:all     # 同时启动 API 与前端，任一进程退出即整体停�
 只需要初始化数据库、不安装依赖时仍可使用 `pnpm bootstrap`；接手方优先使用上面的 `pnpm setup`。
 
 交付方可用 `pnpm handoff:check && pnpm handoff:package` 生成源码、当前 SQLite 数据、政策原文、
-WorkBuddy Skill 和全城市定时任务模板组成的压缩包。接手方解压后只需运行 `pnpm setup`；
+项目专属 AI 上下文、WorkBuddy Skill 和全城市定时任务模板组成的压缩包。接手方解压后只需运行 `pnpm setup`；
 WorkBuddy 的账号级定时任务不能随 Git 复制，但可按 `.workbuddy/automations/policy-ai-sync.template.json`
 一次创建，之后新增城市无需再配置任务。
 

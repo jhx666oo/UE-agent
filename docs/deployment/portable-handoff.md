@@ -10,11 +10,12 @@
 - `.workbuddy/skills/policy-ai-crawler/`：常规政策实时检索与字段抽取 Skill；
 - `.workbuddy/skills/policy-city-onboarding/`：新增城市自动发现来源 Skill；
 - `.workbuddy/automations/policy-ai-sync.template.json`：全城市每日同步模板；
+- `PROJECT_CONTEXT.md`：仅包含 UE-Agent 项目约定的 AI 上下文与长期记忆；
 - WorkBuddy HTTP 失败后的浏览器兜底协议：`/api/policies/browser-artifacts`；
 - WorkBuddy 浏览器兜底任务队列：`/api/policies/fallback-tasks`，以及 010 SQLite 迁移；
 - `HANDOFF.md`：解压后的启动说明。
 
-交付包不会包含 `.env.local`、Vercel OIDC token、依赖目录、构建缓存、`.git` 或 WorkBuddy 私有 memory。令牌只能由接手方在本地环境配置，不能写入仓库或任务模板。
+交付包不会包含 `.env.local`、Vercel OIDC token、依赖目录、构建缓存、`.git`、用户/账号级记忆或 WorkBuddy 私有 memory。令牌只能由接手方在本地环境配置，不能写入仓库或任务模板。项目约定统一写入 `PROJECT_CONTEXT.md`。
 
 ## 交付方生成压缩包
 
