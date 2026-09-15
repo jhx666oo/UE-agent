@@ -446,6 +446,7 @@ curl -s -X POST "$BASE_URL/api/policies/source-candidates/{candidateId}/reject" 
 | `changeStatus` 全是 `unchanged` | 页面确实没更新 | 正常；本次无需抽取，汇总里说明即可 |
 | 抓取报「**无法连接目标官网，请检查链接是否可公开访问**」 | 大概率不是网络问题，而是**国密证书导致 SSL 握手被拒**（见下） | 把该来源 URL 从 `https://` 换成 `http://` 后重抓 |
 | 抓取报「**官网返回 HTTP 412，未保存内容**」 | **JS 挑战型 WAF**（实测 `*.chengdu.gov.cn` 全域，http/https、换 UA、加 Referer 都无效；返回的是要求计算 cookie 的混淆脚本） | 纯 HTTP 通道**无解**。不要反复重试；登记该域名为「需浏览器通道」，在 complete 的 `errors` 里如实说明，相关字段 notDisclosed 待通道升级后补抓 |
+| 抓取报「**响应大小 N 字节超过上限**」 | 原文超过 10MB 上限（政务 PDF 常见，内嵌大量图片可达 30MB+）。注意：**HTML 页被 WAF 拦时，同站的 PDF 附件直链（`/gkml/uploadfiles/...pdf`）往往能通到下载阶段** | PDF 超限无解（不能裁剪——SHA 档案必须完整）。在 errors 里说明；统计公报关键数据常另有 HTML 版或转载版可寻 |
 
 ### 政务站抓不了的真正原因：国密证书（重要）
 
